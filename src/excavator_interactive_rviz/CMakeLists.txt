@@ -50,10 +50,15 @@ install(FILES plugin_description.xml
 
 # --- Python scripts (interactive markers + description topics) ---
 install(PROGRAMS
+  scripts/isaac_command_bridge.py
+  scripts/map_accumulator.py
+  scripts/slew_scan.py
+  scripts/lidar_mapper.py
   scripts/joint_imarkers.py
   scripts/twin_router_node.py
   scripts/physical_tf_follower_node.py
   scripts/robot_description_topics.py
+  scripts/self_filter.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

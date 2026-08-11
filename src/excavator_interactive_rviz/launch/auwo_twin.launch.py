@@ -216,8 +216,8 @@ def generate_launch_description():
                 description="Path to world SDF. Default: excavation_site_local.sdf. Use empty.sdf for plain ground.",
             ),
             # Gazebo worlds (conditional)
-            gazebo_excavation,
-            gazebo_default,
+            # gazebo_excavation,
+            # gazebo_default,
             # Sensor relay nodes (stateless — start early, no dependency on controllers)
             imu_to_pose,
             points_frame_remap,
