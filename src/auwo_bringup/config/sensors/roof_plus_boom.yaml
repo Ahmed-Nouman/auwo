@@ -1,0 +1,74 @@
+# AUWO sensor configuration: roof_os0_plus_boom
+#
+# Two lidars with deliberately different jobs:
+#   lidar_roof - wide-FOV sensor, level, on the slew axis. 360 deg surround for
+#                safety, dumper detection and the situational model.
+#   lidar_boom - 16-beam puck, low and tilted forward. Dense dig-zone terrain.
+#
+# USD scene:  excavator_roof_os0_plus_boom.usd
+#
+# WHY A WIDE-FOV SENSOR ON THE ROOF
+# A 16-beam puck has only +-15 deg vertical. Level at 2.43 m it sees no ground
+# inside 9.07 m; tilted 30 deg it covers the front but loses the rear entirely
+# (rear beams point at the sky). Four tilted pucks would be needed to tile
+# 360 deg near field - which is exactly the ALICE configuration and exactly why
+# they used four. One +-45 deg sensor does it alone.
+#
+# The OS0 profile here stands in for a Livox Mid-360 (360 x 59 deg, available
+# in the lab). Their coverage geometry is close (ground from 2.43 m vs 1.90 m
+# at this height) and Isaac Sim ships OS0 configs but not the Mid-360's
+# non-repetitive scan pattern. Score coverage on ACCUMULATED maps, not single
+# frames, and the proxy holds.
+#
+# MOUNT NOTE: lidar_roof sits on the slew axis (world x = y = 0), so its
+# surround coverage is rotation-invariant - slewing the cab does not change
+# what it sees. Keep it there.
+#
+# HEIGHT: with +-45 deg, ground coverage starts at exactly the mount height.
+#   2.43 m -> ground from 2.43 m, person from 0.73 m, mast 0.77 m above roof
+#   2.98 m -> ground from 2.98 m, person from 1.28 m, mast 1.32 m above roof
+# 2.43 m is preferred: better near-field for the Z4 crush ring, shorter mast,
+# and nothing is lost at the truck (seeing into a bed at 5 m needs only ~14 deg
+# of depression out of the 45 available).
+
+name: roof_os0_plus_boom
+description: >
+  Wide-FOV lidar level on the slew axis for 360 deg surround, plus a 16-beam
+  puck under the boom for the dig zone. Tests whether one wide-FOV sensor
+  replaces the four tilted pucks a narrow-FOV suite would need.
+
+usd_scene: excavator_roof_os0_plus_boom.usd
+
+lidars:
+  - frame: lidar_roof
+    parent: sensor_lidar_link
+    topic: /lidar_roof/points
+    sensor_profile: OS0_REV6_32ch10hz512res   # shipped Isaac config
+    # z lowered from the as-placed 1.735484 to put the sensor at ~2.43 m.
+    # RE-READ from the stage after moving it - do not trust this value.
+    xyz: [-0.350000, 0.000000, 1.879969]
+    quat_xyzw: [0.000000, 0.000000, 1.000000, 0.000000]
+    tilt_deg: 0.0
+    # height_above_ground_m: 2.87
+    # ground_coverage_m: [2.87, 35.0]
+    # person_detect_from_m: 1.17
+
+  - frame: lidar_boom
+    parent: body
+    topic: /lidar_boom/points
+    sensor_profile: AUWO_Puck16
+    xyz: [0.900000, -0.090000, -0.200000]
+    # 17 deg tilt toward +X (arm side). VERIFY by reading back from the stage.
+    quat_xyzw: [0.147809, 0.000000, 0.989016, 0.000000]
+    tilt_deg: 17.0
+    height_above_ground_m: 0.40
+    # beams span 2 - 32 deg depression. Beyond ~6 m the incidence is under
+    # 5 deg, so returns are sparse and noisy - treat 6 m as the useful limit.
+    ground_coverage_m: [0.64, 11.45]
+
+mapping:
+  # 0.5 m suits the low boom sensor, whose coverage starts at 0.64 m. The roof
+  # sensor's own near returns are handled by the URDF link boxes instead.
+  min_range: 0.5
+  inflate: 0.15
+  voxel_size: 0.10
