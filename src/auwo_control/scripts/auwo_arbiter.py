@@ -108,6 +108,12 @@ class Arbiter(Node):
         self.estop = None
         self.create_subscription(Bool, "/estop/stopped", self._on_estop, 10)
 
+        # Mode over a topic as well as a parameter, so an operator dashboard can
+        # switch modes with a plain publish. Foxglove can set parameters too,
+        # but a Publish panel is one button where the parameter panel is a
+        # multi-step dialog - and during a demo that difference matters.
+        self.create_subscription(String, "/auwo/set_mode", self._on_mode, 10)
+
         self.pub = self.create_publisher(
             Float64MultiArray, g("out_topic").value, 10)
         self.pub_mode = self.create_publisher(String, "/auwo/control_mode", 10)
@@ -134,6 +140,15 @@ class Arbiter(Node):
         pos = dict(zip(msg.name, msg.position))
         if all(j in pos for j in JOINTS):
             self.measured = [pos[j] for j in JOINTS]
+
+    def _on_mode(self, msg):
+        m = msg.data.strip().lower()
+        if m not in MODES:
+            self.get_logger().warn("ignoring unknown mode '%s' (want one of %s)"
+                                   % (msg.data, ", ".join(MODES)))
+            return
+        if m != self.mode:
+            self.set_parameters([Parameter("mode", Parameter.Type.STRING, m)])
 
     def _on_estop(self, msg):
         was = self.estop

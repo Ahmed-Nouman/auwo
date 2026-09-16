@@ -102,6 +102,9 @@ class ClickedPointAdapter(Node):
 
         self.create_subscription(PointStamped, "/clicked_point",
                                  self._on_click, 10)
+        # Depth over a topic so the dashboard can set it before closing a
+        # region, without reaching for a parameter dialog.
+        self.create_subscription(Float32, "/auwo/set_depth", self._on_depth, 10)
         self.create_service(Trigger, "/auwo/clear_region", self._srv_clear)
         self.create_service(Trigger, "/auwo/finish_region", self._srv_finish)
 
@@ -152,6 +155,18 @@ class ClickedPointAdapter(Node):
         self.get_logger().info("point %d: (%.2f, %.2f)  r=%.2f m%s"
                                % (len(self.pts), x, y, r, note))
         self._publish_markers()
+
+    def _on_depth(self, msg):
+        d = float(msg.data)
+        if d <= 0.0:
+            self.get_logger().warn("ignoring non-positive depth %.2f" % d)
+            return
+        self.set_parameters(
+            [rclpy.parameter.Parameter("depth", rclpy.Parameter.Type.DOUBLE, d)])
+        self.get_logger().info("depth set to %.2f m" % d)
+        self._publish_markers()          # the label shows the new volume
+        if self.closed:
+            self._publish_region()       # re-issue so the target is rebuilt
 
     # -------------------------------------------------------------- services
     def _srv_clear(self, req, resp):
