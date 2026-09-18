@@ -1,0 +1,31 @@
+# v2 excavator (excavator_v2_description). Position limits come from the URDF.
+# Overrides for planning (velocity/accel only for continuous joints — no position limits on body_rotation)
+default_velocity_scaling_factor: 0.5
+default_acceleration_scaling_factor: 0.5
+
+joint_limits:
+  body_rotation:
+    # Planning-only bound to keep solutions on the nearest yaw branch.
+    # Physical URDF remains wide; this avoids full-turn detours from RRTConnect.
+    has_position_limits: true
+    min_position: -3.141592653589793
+    max_position: 3.141592653589793
+    has_velocity_limits: true
+    max_velocity: 1.2
+    has_acceleration_limits: true
+    max_acceleration: 1.0
+  boom_rotation:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 0.6
+  stick_rotation:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 0.6
+  bucket_rotation:
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 0.8

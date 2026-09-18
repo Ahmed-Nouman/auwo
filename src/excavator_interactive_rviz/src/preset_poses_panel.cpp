@@ -3,7 +3,9 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <string>
+#include <utility>
 
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -24,6 +26,48 @@
 
 namespace excavator_interactive_rviz
 {
+
+// Parsed content of /excavator_twin/presets (published by twin_router_node):
+//   "<name> <body> <boom> <stick> <bucket>"   one line per preset
+//   "cycle <name> <name> ..."                  work cycle order
+struct ParsedPresets
+{
+  std::vector<std::pair<std::string, std::array<double, 4>>> poses;
+  std::vector<std::string> cycle;
+};
+
+inline ParsedPresets parsePresetText(const std::string & text)
+{
+  ParsedPresets out;
+  std::istringstream lines(text);
+  std::string line;
+  while (std::getline(lines, line)) {
+    std::istringstream ls(line);
+    std::string name;
+    if (!(ls >> name)) {
+      continue;
+    }
+    if (name == "cycle") {
+      std::string item;
+      while (ls >> item) {
+        out.cycle.push_back(item);
+      }
+      continue;
+    }
+    std::array<double, 4> q{};
+    bool ok = true;
+    for (auto & v : q) {
+      if (!(ls >> v)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      out.poses.emplace_back(name, q);
+    }
+  }
+  return out;
+}
 
 class PresetPosesPanel : public rviz_common::Panel
 {
@@ -50,11 +94,11 @@ public:
     auto * main_layout = new QVBoxLayout;
 
     // Title
-    auto * title = new QLabel("Excavator Preset Poses");
-    QFont f = title->font();
+    title_ = new QLabel("Excavator Preset Poses");
+    QFont f = title_->font();
     f.setBold(true);
-    title->setFont(f);
-    main_layout->addWidget(title);
+    title_->setFont(f);
+    main_layout->addWidget(title_);
 
     // Mode + Enable row
     auto * mode_layout = new QHBoxLayout;
@@ -111,6 +155,8 @@ public:
 
     // --- Preset definitions -----------------------------------------------
     // joint order: [body_rotation, boom_rotation, stick_rotation, bucket_rotation]
+    // These are the v1 defaults. When twin_router_node runs, the presets of the
+    // selected excavator model arrive on /excavator_twin/presets and replace them.
     presets_.push_back({"Idle",      {-0.339,  -0.639,  -0.809,  -0.660}});
     presets_.push_back({"Dig",       {-3.192,  -0.509,  -1.760,  -1.690}});
     presets_.push_back({"Dump",      {0.611,  -1.210,  -1.760,  -1.632}});
@@ -134,6 +180,15 @@ public:
     joint_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
       "/excavator_twin/state", 10,
       std::bind(&PresetPosesPanel::onJointState, this, std::placeholders::_1));
+
+    // Model-specific presets (latched topics from twin_router_node)
+    auto latched = rclcpp::QoS(1).transient_local().reliable();
+    presets_sub_ = node_->create_subscription<std_msgs::msg::String>(
+      "/excavator_twin/presets", latched,
+      std::bind(&PresetPosesPanel::onPresets, this, std::placeholders::_1));
+    model_sub_ = node_->create_subscription<std_msgs::msg::String>(
+      "/excavator_twin/model", latched,
+      std::bind(&PresetPosesPanel::onModel, this, std::placeholders::_1));
 
     // Timer to spin the node (so joint_states callbacks run)
     ros_timer_ = new QTimer(this);
@@ -286,6 +341,41 @@ private:
     updatePoseStatus();
   }
 
+  // --- Model presets -------------------------------------------------------
+
+  void onModel(const std_msgs::msg::String::SharedPtr msg)
+  {
+    model_name_ = QString::fromStdString(msg->data);
+    title_->setText(QString("Excavator Preset Poses (model %1)").arg(model_name_));
+  }
+
+  void onPresets(const std_msgs::msg::String::SharedPtr msg)
+  {
+    const ParsedPresets parsed = parsePresetText(msg->data);
+    if (parsed.poses.empty()) {
+      return;
+    }
+    std::vector<Preset> presets;
+    for (const auto & p : parsed.poses) {
+      presets.push_back({QString::fromStdString(p.first), p.second});
+    }
+    std::vector<int> cycle;
+    for (const auto & name : parsed.cycle) {
+      for (size_t i = 0; i < presets.size(); ++i) {
+        if (presets[i].name == QString::fromStdString(name)) {
+          cycle.push_back(static_cast<int>(i));
+          break;
+        }
+      }
+    }
+    presets_ = presets;
+    if (!cycle.empty()) {
+      cycle_sequence_ = cycle;
+    }
+    cycle_index_ = 0;
+    updatePoseStatus();
+  }
+
   // --- Helpers -------------------------------------------------------------
 
   struct Preset
@@ -424,6 +514,9 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr twin_cmd_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr twin_mode_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr presets_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr model_sub_;
+  QString model_name_;
 
   QTimer * ros_timer_;
   QTimer * cycle_timer_;
@@ -445,6 +538,7 @@ private:
   int cycle_index_;
 
   // UI elements
+  QLabel * title_;
   QComboBox * mode_combo_;
   QPushButton * enable_button_;
   QLabel * status_label_;

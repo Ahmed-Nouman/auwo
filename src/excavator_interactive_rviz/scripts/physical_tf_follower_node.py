@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-physical_tf_follower_node.py (v12.1 — full joints restored + correct cab-only rotation)
+physical_tf_follower_node.py (v12.2 — full joints restored + correct cab-only rotation)
+
+v12.2: per-model calibration offsets (body_offset, stick_offset, bucket_offset;
+boom_offset already existed). Defaults keep the v1 behaviour unchanged; the
+launch file passes the values from the excavator model profile.
 """
 
 import math
@@ -81,6 +85,9 @@ class PhysicalTfFollowerNode(Node):
         self.declare_parameter('bucket_sign', 1.0)
 
         self.declare_parameter('boom_offset', -2.30)
+        self.declare_parameter('body_offset', 0.0)
+        self.declare_parameter('stick_offset', 0.0)
+        self.declare_parameter('bucket_offset', 0.0)
         self.declare_parameter('base_link_roll_correction', 0.0)
 
         self._mirror = self.get_parameter('mirror_to_joint_states').value
@@ -98,6 +105,9 @@ class PhysicalTfFollowerNode(Node):
         self._s_bucket = self.get_parameter('bucket_sign').value
 
         self._boom_offset = self.get_parameter('boom_offset').value
+        self._body_offset = float(self.get_parameter('body_offset').value)
+        self._stick_offset = float(self.get_parameter('stick_offset').value)
+        self._bucket_offset = float(self.get_parameter('bucket_offset').value)
         self._roll_corr = self.get_parameter('base_link_roll_correction').value
 
         self._prev_body = None
@@ -117,7 +127,9 @@ class PhysicalTfFollowerNode(Node):
 
         self._publish_static_base()
 
-        self.get_logger().info("v12.1 TF follower started (full joints restored)")
+        self.get_logger().info(
+            "v12.2 TF follower started (offsets body=%.3f boom=%.3f stick=%.3f bucket=%.3f)"
+            % (self._body_offset, self._boom_offset, self._stick_offset, self._bucket_offset))
 
     # -------------------------
     # static base link
@@ -157,6 +169,8 @@ class PhysicalTfFollowerNode(Node):
         yaw = wrap_zero_at_minus180(yaw)
 
         yaw *= self._s_body
+        if self._body_offset:
+            yaw = normalize_angle(yaw + self._body_offset)
 
         self._prev_body = continuous_angle(yaw, self._prev_body)
         return self._prev_body
@@ -177,12 +191,16 @@ class PhysicalTfFollowerNode(Node):
         stick_a = None
         if stick:
             stick_a = self._s_stick * pitch_from_quat(stick.transform.rotation)
+            if self._stick_offset:
+                stick_a = normalize_angle(stick_a + self._stick_offset)
             self._prev_stick = stick_a
 
         bucket = self.lookup(self._body, self._bucket)
         bucket_a = None
         if bucket:
             bucket_a = self._s_bucket * pitch_from_quat(bucket.transform.rotation)
+            if self._bucket_offset:
+                bucket_a = normalize_angle(bucket_a + self._bucket_offset)
             self._prev_bucket = bucket_a
 
         # -------------------------

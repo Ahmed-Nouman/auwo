@@ -1,0 +1,43 @@
+---
+description: This workspace uses ROS 2 Jazzy and Gazebo Harmonic only
+alwaysApply: true
+---
+
+# ROS 2 Jazzy + Gazebo Harmonic
+
+This AUWO workspace targets **ROS 2 Jazzy** (Jazzy Jalisco) and **Gazebo Harmonic** (gz-sim 8.x). Assume **`ROS_DISTRO=jazzy`** and Ubuntu **24.04 Noble** unless the user says otherwise.
+
+## Official documentation
+
+| Topic | URL |
+|-------|-----|
+| ROS 2 Jazzy (index) | https://docs.ros.org/en/jazzy/ |
+| ROS 2 Jazzy Installation | https://docs.ros.org/en/jazzy/Installation.html |
+| Gazebo Harmonic (index) | https://gazebosim.org/docs/harmonic/ |
+| Gazebo Harmonic Install | https://gazebosim.org/docs/harmonic/install |
+| Gazebo ↔ ROS 2 | https://gazebosim.org/docs/harmonic/ros2_interop |
+| ros_gz_bridge (Jazzy API) | https://docs.ros.org/en/ros2_packages/jazzy/api/ros_gz_bridge/ |
+
+Prefer these pages when answering ROS/Gazebo questions. Do **not** default to other distros or Gazebo generations.
+
+## Do not use (wrong for this repo)
+
+- **ROS 2:** Humble, Iron, Rolling, Kilted, etc. — unless the user explicitly asks for comparison.
+- **Gazebo:** Fortress, Garden, Ionic, Classic (`gazebo` binary, Gazebo 11) — this stack uses **`gz sim`** (Harmonic).
+
+## Conventions here
+
+- **Debian packages:** `ros-jazzy-<package>` (e.g. `ros-jazzy-moveit-planners-ompl`). Use `jazzy` in `sudo apt install ros-jazzy-...`.
+- **Integration:** `ros_gz_sim`, `ros_gz_bridge` with Harmonic; launch patterns include `gz sim -s` / `gz sim -g` and **`GZ_PARTITION`** for Gazebo Transport.
+
+## Example
+
+```bash
+# ✅ GOOD — Jazzy
+sudo apt install ros-jazzy-ros-gz
+
+# ❌ BAD — wrong distro for this workspace
+sudo apt install ros-humble-ros-gz
+```
+
+When unsure about APIs or package layout, check the Jazzy and Harmonic docs above, not older tutorials.

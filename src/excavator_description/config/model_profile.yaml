@@ -1,0 +1,74 @@
+# Model profile read by excavator_models (select with excavator_model:=v1).
+# Original excavator. The values below are exactly the ones that were previously
+# hard-coded in the launch files and nodes, so v1 behaves as before.
+label: "Original excavator (DAE meshes)"
+xacro: urdf/excavator.urdf.xacro
+controllers: config/controllers.yaml
+control_urdf: ""
+
+resolve_mesh_uris: false
+# Simulation-only URDF patches previously hard-coded in excavator_gazebo/gazebo.launch.py
+sim_patches:
+  zero_base_yaw: true            # base_to_base_link rpy 0 0 3.14159 -> 0 0 0
+  zero_bucket_visual_rpy: true   # bucket visual rpy 0 3.14159 0 -> 0 0 0
+
+arm_joints: [body_rotation, boom_rotation, stick_rotation, bucket_rotation]
+urdf_limits:
+  boom_rotation:   [-1.40, 0.20]
+  stick_rotation:  [-2.428, 0.20]
+  bucket_rotation: [-2.00, 2.00]
+# Ranges used by interactive markers, teleop and the excavation cycle
+ui_limits:
+  body_rotation:   [-3.141592653589793, 3.141592653589793]
+  boom_rotation:   [-1.308, -0.087]
+  stick_rotation:  [-2.428, -0.085]
+  bucket_rotation: [-2.395, -0.357]
+
+extra_controllers: []
+linkage:
+  enabled: false
+
+# Poses [body, boom, stick, bucket]
+safe_pose: [0.0, -0.5, -1.0, -1.0]
+demo_pose: [0.0, -0.70, -1.26, -1.12]
+presets:                  # RViz Preset Poses panel
+  Idle:      [-0.339, -0.639, -0.809, -0.660]
+  Dig:       [-3.192, -0.509, -1.760, -1.690]
+  Dump:      [ 0.611, -1.210, -1.760, -1.632]
+  Transport: [ 0.0,   -1.2,   -1.2,   -1.5]
+cycle_sequence: [Idle, Transport, Dig, Transport, Dump, Transport]
+excavation_cycle:         # excavator_cycle node
+  PREPARE_DIG:         [0.0, -1.20, -2.20, -0.50]
+  SCOOP_AND_SLEW:      [0.5, -1.10, -1.80, -2.20]
+  LIFT_AND_ALIGN_DUMP: [1.0, -0.40, -0.90, -2.20]
+  DUMP:                [1.0, -0.40, -0.90, -0.50]
+  RETURN_HOME:         [0.0, -0.60, -1.20, -1.20]
+
+scene:
+  dumper_x: 4.0
+  dumper_y: 3.0
+  dumper_z: 0.5
+  dumper_yaw: 0.0
+  truck_box_x: 6.25
+  truck_box_y: 3.0
+  truck_box_z: 0.95
+  truck_box_yaw: 0.0
+  truck_box_lx: 4.5
+  truck_box_ly: 2.6
+  truck_box_lz: 1.7
+  imu_pose_z:
+    twin: 0.6       # spawn_z 0.1 + imu offset 0.5 (auwo_twin)
+    physical: 1.5   # auwo_physical_twin with use_gazebo
+
+# physical_tf_follower_node calibration (unchanged)
+physical_twin:
+  body_offset: 0.0
+  boom_offset: -2.30
+  stick_offset: 0.0
+  bucket_offset: 0.0
+
+# excavator_moveit_config files (relative to that package)
+moveit:
+  srdf: config/excavator.srdf
+  joint_limits: config/joint_limits.yaml
+  controllers: config/excavator_controllers.yaml

@@ -1,0 +1,14 @@
+# Blender 5.0.1 MTL File: 'Excavator_rig_packed.blend'
+# www.blender.org
+
+newmtl Excavator
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd Excavator_BaseColor.png
+map_Ns Excavator_Roughness.png
+map_refl Excavator_Metallic.png
+map_Bump -bm 1.000000 Excavator_Normal.png

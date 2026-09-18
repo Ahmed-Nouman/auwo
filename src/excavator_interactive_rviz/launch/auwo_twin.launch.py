@@ -3,6 +3,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -12,12 +13,14 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 
+from excavator_models import default_model, load_profile
 
-def generate_launch_description():
-    pkg_desc = get_package_share_directory("excavator_description")
+
+def _setup(context, *args, **kwargs):
+    profile = load_profile(context.launch_configurations.get("excavator_model", ""))
+    model = profile["model"]
+    scene = profile.get("scene", {})
     pkg_gazebo = get_package_share_directory("excavator_gazebo")
-    empty_world = os.path.join(pkg_desc, "worlds", "empty.sdf")
-    excavation_site_world = os.path.join(pkg_desc, "worlds", "excavation_site_local.sdf")
 
     use_excavation_site = LaunchConfiguration("use_excavation_site")
     world_cfg = LaunchConfiguration("world")
@@ -47,15 +50,12 @@ def generate_launch_description():
             "spawn_R": "0.0",
             "spawn_P": "0.0",
             # spawn_Y=0.0: desired world-facing direction for the robot.
-            # gazebo.launch.py internally adds +3.14159 to the Gazebo spawner
-            # to compensate for the URDF base_to_base_link 180° fixed joint,
-            # while publishing the static TF at spawn_Y so RViz renders correctly.
+            # gazebo.launch.py applies the model's sim patches (v1: zeroes the
+            # base_to_base_link 180° yaw), so RViz and Gazebo agree.
             "spawn_Y": "0.0",
             "spawn_dumper": "true",
-            "dumper_x": "4.0",
-            "dumper_y": "3.0",
-            "dumper_z": "0.5",
-            "dumper_yaw": "0.0",
+            # dumper_x/y/z/yaw: taken from the excavator model profile (scene section)
+            "excavator_model": model,
             "controller_spawn_delay_sec": "25.0"  # FIX: was 12.0 — /controller_manager needs more time after plugin loads,  # FIX 3: forwarded explicitly
         }.items(),
         condition=IfCondition(use_excavation_site),
@@ -71,7 +71,8 @@ def generate_launch_description():
             "spawn_z": "0.1",           # FIX 1: consistent with above
             "spawn_R": "0.0",
             "spawn_P": "0.0",
-            "spawn_Y": "0.0",  # gazebo.launch.py handles the +3.14159 offset internally
+            "spawn_Y": "0.0",
+            "excavator_model": model,
             "controller_spawn_delay_sec": "25.0"  # FIX: was 12.0 — /controller_manager needs more time after plugin loads,  # FIX 3
         }.items(),
         condition=UnlessCondition(use_excavation_site),
@@ -114,7 +115,7 @@ def generate_launch_description():
         executable="joint_imarkers.py",
         name="excavator_joint_imarkers",
         output="screen",
-        parameters=[{"use_sim_time": True}],
+        parameters=[{"use_sim_time": True, "excavator_model": model}],
     )
     joint_imarkers_delayed = TimerAction(period=32.0, actions=[joint_imarkers])
 
@@ -138,6 +139,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {"use_sim_time": True},
+            {"excavator_model": model},
             {"default_mode": "simulation"},
             # This must match trajectory_command_adapter.py's subscribed input topic.
             # If the adapter subscribes to /arm_position_controller/commands, keep as-is.
@@ -160,7 +162,7 @@ def generate_launch_description():
         executable="trajectory_command_adapter.py",
         name="trajectory_command_adapter",
         output="screen",
-        parameters=[{"use_sim_time": True}],
+        parameters=[{"use_sim_time": True, "excavator_model": model}],
     )
     trajectory_adapter_delayed = TimerAction(period=28.0, actions=[trajectory_adapter])
 
@@ -171,7 +173,8 @@ def generate_launch_description():
     # this should be 0.1 + the IMU link's z offset from base_link in your URDF.
     # Adjust imu_z_offset to match: `ros2 run tf2_ros tf2_echo base_link imu_link`
     # -------------------------------------------------------------------------
-    imu_z_offset = 0.5  # <- tune this: z distance from ground to your IMU link
+    # Height from the model profile (v1: 0.1 spawn + 0.5 offset = 0.6, v2: roof IMU 2.27)
+    imu_pose_z = float(scene.get("imu_pose_z", {}).get("twin", 0.6))
     imu_to_pose = Node(
         package="excavator_gazebo",
         executable="imu_to_pose.py",
@@ -182,7 +185,7 @@ def generate_launch_description():
             {"pose_frame_id": "world"},
             {"position_x": 0.5},
             {"position_y": 0.0},
-            {"position_z": 0.1 + imu_z_offset},  # FIX: was hardcoded 1.5
+            {"position_z": imu_pose_z},
         ],
     )
 
@@ -203,8 +206,36 @@ def generate_launch_description():
         ],
     )
 
+    return [
+        # Gazebo worlds (conditional)
+        gazebo_excavation,
+        gazebo_default,
+        # Sensor relay nodes (stateless — start early, no dependency on controllers)
+        imu_to_pose,
+        points_frame_remap,
+        # Trajectory adapter needs active arm_trajectory_controller
+        trajectory_adapter_delayed,
+        # RViz — after controllers + TF tree are stable
+        rviz_delayed,
+        # Interactive nodes — need /joint_states live from joint_state_broadcaster
+        joint_imarkers_delayed,
+        twin_router_delayed,
+    ]
+
+
+def generate_launch_description():
+    pkg_desc = get_package_share_directory("excavator_description")
+    excavation_site_world = os.path.join(pkg_desc, "worlds", "excavation_site_local.sdf")
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "excavator_model",
+                default_value=default_model(),
+                description=(
+                    "Excavator model: v1 (excavator_description) or v2 "
+                    "(excavator_v2_description). Default: $AUWO_EXCAVATOR_MODEL or v2."
+                ),
+            ),
             DeclareLaunchArgument(
                 "use_excavation_site",
                 default_value="true",
@@ -215,18 +246,6 @@ def generate_launch_description():
                 default_value=excavation_site_world,
                 description="Path to world SDF. Default: excavation_site_local.sdf. Use empty.sdf for plain ground.",
             ),
-            # Gazebo worlds (conditional)
-            gazebo_excavation,
-            gazebo_default,
-            # Sensor relay nodes (stateless — start early, no dependency on controllers)
-            imu_to_pose,
-            points_frame_remap,
-            # Trajectory adapter needs active arm_trajectory_controller
-            trajectory_adapter_delayed,
-            # RViz — after controllers + TF tree are stable
-            rviz_delayed,
-            # Interactive nodes — need /joint_states live from joint_state_broadcaster
-            joint_imarkers_delayed,
-            twin_router_delayed,
+            OpaqueFunction(function=_setup),
         ]
     )

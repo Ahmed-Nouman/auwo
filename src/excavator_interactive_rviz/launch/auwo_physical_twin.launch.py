@@ -6,6 +6,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition
@@ -21,24 +22,33 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
+from excavator_models import default_model, load_profile, process_xacro, resolve_package_uris
 
-def generate_launch_description():
+
+def _is_true(value):
+    return str(value).strip().lower() in ("true", "1")
+
+
+def _setup(context, *args, **kwargs):
+    cfg = context.launch_configurations
+    profile = load_profile(cfg.get("excavator_model", ""))
+    model = profile["model"]
+    scene = profile.get("scene", {})
+    calib = profile.get("physical_twin", {})
+    use_gazebo_now = _is_true(cfg.get("use_gazebo", "false"))
+    use_demo_now = _is_true(cfg.get("use_demo_pose", "false"))
 
     # ── Package directories ──────────────────────────────────────────────────
-    pkg_desc   = get_package_share_directory("excavator_description")
     pkg_gazebo = get_package_share_directory("excavator_gazebo")
     pkg_twin   = get_package_share_directory("excavator_interactive_rviz")
 
     # ── File paths ───────────────────────────────────────────────────────────
-    default_model        = os.path.join(pkg_desc, "urdf", "excavator.urdf.xacro")
-    default_world        = os.path.join(pkg_desc, "worlds", "empty.sdf")
     follower_params_file = os.path.join(pkg_twin, "config", "physical_tf_follower.yaml")
 
     # ── Launch configurations ────────────────────────────────────────────────
     use_gazebo    = LaunchConfiguration("use_gazebo")
     spawn_dumper  = LaunchConfiguration("spawn_dumper")
     world         = LaunchConfiguration("world")
-    model         = LaunchConfiguration("model")
     use_sim_time  = LaunchConfiguration("use_sim_time")
     use_demo_pose = LaunchConfiguration("use_demo_pose")
 
@@ -53,20 +63,16 @@ def generate_launch_description():
     mqtt_password = LaunchConfiguration("mqtt_password")
 
     # ── Robot description ────────────────────────────────────────────────────
-    # use_sim:= must match whether Gazebo is actually running.
-    # Passing use_sim:=true without Gazebo causes a fatal controller_manager
-    # crash because GazeboSimSystem can't find the simulation.
-    robot_description = ParameterValue(
-        Command([
-            TextSubstitution(text="xacro "),
-            model,
-            TextSubstitution(text=" use_sim:="),
-            PythonExpression([
-                "'true' if '", use_gazebo, "'.lower() in ('true','1') else 'false'"
-            ]),
-        ]),
-        value_type=str,
-    )
+    # use_sim:= must match whether Gazebo is actually running (kept from the
+    # original launch; the model xacros do not use it for ros2_control).
+    # The optional "model" argument overrides the model's xacro path.
+    xacro_override = cfg.get("model", "").strip()
+    if xacro_override:
+        profile = dict(profile, xacro_path=xacro_override)
+    robot_description = process_xacro(
+        profile, {"use_sim": "true" if use_gazebo_now else "false"})
+    # v2: file:// mesh paths for reliable RViz loading (v1 keeps package://)
+    robot_description = resolve_package_uris(robot_description, profile, scheme="file")
 
     # ────────────────────────────────────────────────────────────────────────
     # CORE NODES — always active
@@ -113,6 +119,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {"use_sim_time": use_sim_time},
+            {"excavator_model": model},
             {"default_mode": "physical"},
             {"sim_command_topic": "/arm_position_controller/commands"},
             {"sim_state_topic": "/joint_states"},
@@ -151,30 +158,77 @@ def generate_launch_description():
                 "boom_sign":   1.0,
                 "stick_sign":  1.0,
                 "bucket_sign": 1.0,
+                # Model calibration (v1: boom_offset -2.30, others 0 = unchanged)
+                "body_offset":   float(calib.get("body_offset", 0.0)),
+                "boom_offset":   float(calib.get("boom_offset", -2.30)),
+                "stick_offset":  float(calib.get("stick_offset", 0.0)),
+                "bucket_offset": float(calib.get("bucket_offset", 0.0)),
             },
         ],
     )
+
+    # v2: hydraulic cylinders + bucket linkage follow the mirrored joint states.
+    linkage_actions = []
+    if profile["linkage"].get("enabled") and not use_gazebo_now:
+        linkage_actions.append(Node(
+            package="excavator_models",
+            executable="linkage_state_publisher",
+            name="linkage_state_publisher",
+            output="screen",
+            parameters=[{
+                "excavator_model": model,
+                "mode": "display" if use_demo_now else "mirror",
+                "use_sim_time": use_sim_time,
+            }],
+        ))
 
 
     # ────────────────────────────────────────────────────────────────────────
     # DEMO MODE NODES  (use_demo_pose:=true only)
     # ────────────────────────────────────────────────────────────────────────
-    demo_joint_states = Node(
-        package="joint_state_publisher",
-        executable="joint_state_publisher",
-        name="demo_joint_state_publisher",
-        output="screen",
-        parameters=[
-            {"use_sim_time": use_sim_time},
-            {"rate": 30},
-            {"robot_description": robot_description},
-            {"body_rotation":   0.0},
-            {"boom_rotation":  -0.70},
-            {"stick_rotation": -1.26},
-            {"bucket_rotation":-1.12},
-        ],
-        condition=IfCondition(use_demo_pose),
-    )
+    demo_pose = [float(v) for v in profile.get("demo_pose", [0.0, -0.70, -1.26, -1.12])]
+    if profile.get("control_urdf_path"):
+        # v2: publish the actuated demo joints; linkage_state_publisher (display
+        # mode) adds the cylinder/linkage joints and publishes /joint_states.
+        demo_joint_states = Node(
+            package="joint_state_publisher",
+            executable="joint_state_publisher",
+            name="demo_joint_state_publisher",
+            output="screen",
+            arguments=[profile["control_urdf_path"]],
+            remappings=[
+                ("joint_states", "joint_commands"),
+                ("robot_description", "control_robot_description"),
+            ],
+            parameters=[
+                {"use_sim_time": use_sim_time},
+                {"rate": 30},
+                {"zeros": {
+                    "body_rotation": demo_pose[0],
+                    "boom_rotation": demo_pose[1],
+                    "stick_rotation": demo_pose[2],
+                    "bucket_rotation": demo_pose[3],
+                }},
+            ],
+            condition=IfCondition(use_demo_pose),
+        )
+    else:
+        demo_joint_states = Node(
+            package="joint_state_publisher",
+            executable="joint_state_publisher",
+            name="demo_joint_state_publisher",
+            output="screen",
+            parameters=[
+                {"use_sim_time": use_sim_time},
+                {"rate": 30},
+                {"robot_description": robot_description},
+                {"body_rotation":   demo_pose[0]},
+                {"boom_rotation":   demo_pose[1]},
+                {"stick_rotation":  demo_pose[2]},
+                {"bucket_rotation": demo_pose[3]},
+            ],
+            condition=IfCondition(use_demo_pose),
+        )
 
     demo_world_tf = Node(
         package="tf2_ros",
@@ -232,7 +286,7 @@ def generate_launch_description():
         executable="joint_imarkers.py",
         name="excavator_joint_imarkers",
         output="screen",
-        parameters=[{"use_sim_time": use_sim_time}],
+        parameters=[{"use_sim_time": use_sim_time, "excavator_model": model}],
         condition=IfCondition(use_gazebo),
     )
 
@@ -246,7 +300,7 @@ def generate_launch_description():
             {"pose_frame_id": "world"},
             {"position_x": 0.5},
             {"position_y": 0.0},
-            {"position_z": 1.5},
+            {"position_z": float(scene.get("imu_pose_z", {}).get("physical", 1.5))},
         ],
         condition=IfCondition(use_gazebo),
     )
@@ -270,7 +324,7 @@ def generate_launch_description():
         executable="trajectory_command_adapter.py",
         name="trajectory_command_adapter",
         output="screen",
-        parameters=[{"use_sim_time": use_sim_time}],
+        parameters=[{"use_sim_time": use_sim_time, "excavator_model": model}],
         condition=IfCondition(use_gazebo),
     )
 
@@ -282,10 +336,8 @@ def generate_launch_description():
             "spawn_x":      "0.0",
             "spawn_y":      "0.0",
             "spawn_z":      "1.5",
-            "dumper_x":     "4.0",
-            "dumper_y":     "3.0",
-            "dumper_z":     "0.5",
-            "dumper_yaw":   "0.0",
+            # dumper pose: from the excavator model profile (scene section)
+            "excavator_model": model,
         }.items(),
         condition=IfCondition(use_gazebo),
     )
@@ -293,42 +345,7 @@ def generate_launch_description():
     # ────────────────────────────────────────────────────────────────────────
     # ASSEMBLY
     # ────────────────────────────────────────────────────────────────────────
-    return LaunchDescription([
-
-        # ── Arguments ────────────────────────────────────────────────────────
-        DeclareLaunchArgument("use_gazebo",    default_value="false",
-            description="Launch Gazebo and spawn excavator."),
-        DeclareLaunchArgument("spawn_dumper",  default_value="false",
-            description="Spawn dump truck (requires use_gazebo:=true)."),
-        DeclareLaunchArgument("world",         default_value=default_world,
-            description="Gazebo world SDF path."),
-        DeclareLaunchArgument("model",         default_value=default_model,
-            description="Excavator URDF/Xacro path."),
-        DeclareLaunchArgument("use_sim_time",
-            default_value=PythonExpression([
-                "'true' if '", use_gazebo, "'.lower() in ('true','1') else 'false'"
-            ]),
-            description="Always true. Bag runs with --clock, Novatron publishes /clock."),
-
-        # FIX: was 'true' — caused static TF to override live Novatron data.
-        DeclareLaunchArgument("use_demo_pose", default_value="false",
-            description="true=static demo pose  false=live Novatron (default)."),
-
-
-        # MQTT parameters — set these to match your Xsite3D network config.
-        # Defaults match the values in the novatron_xsite3d_interface README.
-        DeclareLaunchArgument("mqtt_host",     default_value="192.168.4.232",
-            description="IP address of the Xsite3D MQTT broker."),
-        DeclareLaunchArgument("mqtt_port",     default_value="8884",
-            description="Port of the Xsite3D MQTT broker."),
-        DeclareLaunchArgument("mqtt_topic",
-            default_value="novatron/realtime-app/kinematicResults",
-            description="MQTT topic for kinematic results."),
-        DeclareLaunchArgument("mqtt_username", default_value="user",
-            description="MQTT broker username."),
-        DeclareLaunchArgument("mqtt_password", default_value="password",
-            description="MQTT broker password."),
-
+    return [
         # ── Core — delayed 3 s when use_sim_time=true so /clock from bag is
         # established before nodes start. In live mode (use_sim_time=false)
         # fires almost immediately (0.1 s).
@@ -359,4 +376,50 @@ def generate_launch_description():
         trajectory_adapter,
         imu_to_pose,
         points_frame_remap,
+    ] + linkage_actions
+
+
+def generate_launch_description():
+    pkg_desc = get_package_share_directory("excavator_description")
+    default_world = os.path.join(pkg_desc, "worlds", "empty.sdf")
+    use_gazebo = LaunchConfiguration("use_gazebo")
+    return LaunchDescription([
+        # ── Arguments ────────────────────────────────────────────────────────
+        DeclareLaunchArgument("use_gazebo",    default_value="false",
+            description="Launch Gazebo and spawn excavator."),
+        DeclareLaunchArgument("spawn_dumper",  default_value="false",
+            description="Spawn dump truck (requires use_gazebo:=true)."),
+        DeclareLaunchArgument("world",         default_value=default_world,
+            description="Gazebo world SDF path."),
+        DeclareLaunchArgument("excavator_model", default_value=default_model(),
+            description="Excavator model: v1 (excavator_description) or v2 "
+                        "(excavator_v2_description). Default: $AUWO_EXCAVATOR_MODEL or v2."),
+        DeclareLaunchArgument("model",         default_value="",
+            description="Optional Excavator URDF/Xacro path (overrides excavator_model's xacro)."),
+        DeclareLaunchArgument("use_sim_time",
+            default_value=PythonExpression([
+                "'true' if '", use_gazebo, "'.lower() in ('true','1') else 'false'"
+            ]),
+            description="Always true. Bag runs with --clock, Novatron publishes /clock."),
+
+        # FIX: was 'true' — caused static TF to override live Novatron data.
+        DeclareLaunchArgument("use_demo_pose", default_value="false",
+            description="true=static demo pose  false=live Novatron (default)."),
+
+
+        # MQTT parameters — set these to match your Xsite3D network config.
+        # Defaults match the values in the novatron_xsite3d_interface README.
+        DeclareLaunchArgument("mqtt_host",     default_value="192.168.4.232",
+            description="IP address of the Xsite3D MQTT broker."),
+        DeclareLaunchArgument("mqtt_port",     default_value="8884",
+            description="Port of the Xsite3D MQTT broker."),
+        DeclareLaunchArgument("mqtt_topic",
+            default_value="novatron/realtime-app/kinematicResults",
+            description="MQTT topic for kinematic results."),
+        DeclareLaunchArgument("mqtt_username", default_value="user",
+            description="MQTT broker username."),
+        DeclareLaunchArgument("mqtt_password", default_value="password",
+            description="MQTT broker password."),
+
+        OpaqueFunction(function=_setup),
     ])

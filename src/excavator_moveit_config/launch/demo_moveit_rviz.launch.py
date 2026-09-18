@@ -5,6 +5,7 @@ Use this to verify Plan and Execute against a local FollowJointTrajectory server
 and consistent /joint_states.
 
   ros2 launch excavator_moveit_config demo_moveit_rviz.launch.py
+  ros2 launch excavator_moveit_config demo_moveit_rviz.launch.py excavator_model:=v1
 
 This launch defaults to ROS_DOMAIN_ID=0 (standard/default domain).
 """
@@ -18,6 +19,7 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     LogInfo,
+    OpaqueFunction,
     RegisterEventHandler,
     SetEnvironmentVariable,
     TimerAction,
@@ -28,20 +30,22 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-from moveit_configs_utils import MoveItConfigsBuilder
+from excavator_models import default_model
+from excavator_models.moveit import moveit_configs
 
 
-def generate_launch_description():
+def _setup(context, *args, **kwargs):
     pkg_moveit = get_package_share_directory("excavator_moveit_config")
-    pkg_desc = get_package_share_directory("excavator_description")
-    controllers_yaml = os.path.join(pkg_desc, "config", "controllers.yaml")
 
     use_sim = LaunchConfiguration("use_sim_time")
 
-    builder = MoveItConfigsBuilder("excavator", package_name="excavator_moveit_config")
-    builder.planning_pipelines(pipelines=["ompl"])
-    builder.robot_description(mappings={"use_mock_hardware": "true"})
-    moveit_config = builder.to_moveit_configs()
+    moveit_config, profile = moveit_configs(
+        context.launch_configurations.get("excavator_model", ""),
+        use_mock_hardware=True,
+        pipelines=["ompl"],
+    )
+    model = profile["model"]
+    controllers_yaml = profile["controllers_path"]
     robot_desc_dict = moveit_config.robot_description
 
     ros2_control_node = Node(
@@ -142,6 +146,7 @@ def generate_launch_description():
         launch_arguments={
             "use_sim_time": use_sim,
             "use_mock_hardware": "true",
+            "excavator_model": model,
             "trajectory_action": "/arm_trajectory_controller/follow_joint_trajectory",
             "joint_states_topic": "/joint_states",
         }.items(),
@@ -154,6 +159,7 @@ def generate_launch_description():
         launch_arguments={
             "use_sim_time": use_sim,
             "use_mock_hardware": "true",
+            "excavator_model": model,
             "joint_states_topic": "/joint_states",
         }.items(),
     )
@@ -191,20 +197,69 @@ def generate_launch_description():
         )
     )
 
+    # Model extras (v2: blade_controller, linkage_controller), spawned one after another
+    # once arm_trajectory_controller is up, in parallel with the trajectory-action wait.
+    extra_spawners = [
+        Node(
+            package="controller_manager",
+            executable="spawner",
+            arguments=[name, "--controller-manager", "/controller_manager"],
+            output="screen",
+        )
+        for name in profile["extra_controllers"]
+    ]
     after_arm_spawn_wait = RegisterEventHandler(
         OnProcessExit(
             target_action=spawner_arm,
-            on_exit=[wait_trajectory_action],
+            on_exit=[wait_trajectory_action] + extra_spawners[:1],
         )
     )
+    extra_chain = [
+        RegisterEventHandler(OnProcessExit(target_action=a, on_exit=[b]))
+        for a, b in zip(extra_spawners[:-1], extra_spawners[1:])
+    ]
 
     spawn_controllers = TimerAction(
         period=3.0,
-        actions=[spawner_jsb, after_jsb_spawn_arm, after_arm_spawn_wait],
+        actions=[spawner_jsb, after_jsb_spawn_arm, after_arm_spawn_wait, *extra_chain],
     )
+
+    model_nodes = []
+    if profile["linkage"].get("enabled"):
+        model_nodes.append(Node(
+            package="excavator_models",
+            executable="linkage_state_publisher",
+            name="linkage_state_publisher",
+            output="screen",
+            parameters=[{
+                "excavator_model": model,
+                "mode": "controller",
+                "use_sim_time": ParameterValue(use_sim, value_type=bool),
+            }],
+        ))
+
+    return [
+        when_wait_done,
+        ros2_control_node,
+        robot_state_publisher,
+        world_tf,
+        spawn_controllers,
+        *model_nodes,
+    ]
+
+
+def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "excavator_model",
+                default_value=default_model(),
+                description=(
+                    "Excavator model: v1 (excavator_description) or v2 "
+                    "(excavator_v2_description). Default: $AUWO_EXCAVATOR_MODEL or v2."
+                ),
+            ),
             DeclareLaunchArgument(
                 "ros_domain_id",
                 default_value="0",
@@ -226,10 +281,6 @@ def generate_launch_description():
                 default_value="120.0",
                 description="Seconds to wait for arm trajectory action + active controllers.",
             ),
-            when_wait_done,
-            ros2_control_node,
-            robot_state_publisher,
-            world_tf,
-            spawn_controllers,
+            OpaqueFunction(function=_setup),
         ]
     )

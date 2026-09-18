@@ -7,10 +7,22 @@ from rclpy.node import Node
 from std_msgs.msg import Float64MultiArray
 from enum import Enum, auto
 
-# URDF joint ranges for clamping (body is continuous so we won't clamp it)
+from excavator_models import default_model, load_profile
+
+# Joint ranges for clamping (body is continuous so we won't clamp it).
+# Replaced by the excavator model profile (ui_limits) in ExcavationCycleNode.__init__;
+# the values below are the v1 ones.
 BOOM_MIN, BOOM_MAX = -1.308, -0.087     # boom
 STICK_MIN, STICK_MAX = -2.428, -0.085   # stick
 BUCKET_MIN, BUCKET_MAX = -2.395, -0.357 # bucket
+
+
+def _apply_limits(profile):
+    global BOOM_MIN, BOOM_MAX, STICK_MIN, STICK_MAX, BUCKET_MIN, BUCKET_MAX
+    lim = profile['ui_limits']
+    BOOM_MIN, BOOM_MAX = (float(v) for v in lim['boom_rotation'])
+    STICK_MIN, STICK_MAX = (float(v) for v in lim['stick_rotation'])
+    BUCKET_MIN, BUCKET_MAX = (float(v) for v in lim['bucket_rotation'])
 
 
 def clamp_arm_joints(q):
@@ -33,6 +45,13 @@ class CycleState(Enum):
 class ExcavationCycleNode(Node):
     def __init__(self):
         super().__init__('excavation_cycle_node')
+
+        # Excavator model (v1/v2): cycle poses and joint ranges from its profile
+        model = self.declare_parameter('excavator_model', default_model()).value
+        profile = load_profile(model)
+        _apply_limits(profile)
+        self.poses = {k: [float(v) for v in q]
+                      for k, q in profile.get('excavation_cycle', {}).items()}
 
         # Publisher to your joint group position controller
         self.pub = self.create_publisher(
@@ -65,7 +84,7 @@ class ExcavationCycleNode(Node):
         }
 
         # Current commanded joint vector
-        self.q = [0.0, -0.5, -1.0, -1.0]
+        self.q = [float(v) for v in profile['safe_pose']]
         self.target_q = self.q[:]
 
         # Max per-tick change (rad/tick) – larger so arm motion is visible
@@ -75,7 +94,8 @@ class ExcavationCycleNode(Node):
         self.warmup_done = False
         self.warmup_until_wall = time.monotonic() + 15.0
 
-        self.get_logger().info("🟢 excavation_cycle_node (incremental stepping like teleop) started")
+        self.get_logger().info(
+            f"🟢 excavation_cycle_node (incremental stepping like teleop) started for model {profile['model']}")
 
     #
     # --- State machine helpers ---
@@ -92,25 +112,14 @@ class ExcavationCycleNode(Node):
     def _desired_pose_for_state(self, state: CycleState):
         """Return the target joint pose [body, boom, stick, bucket] for the given state."""
 
-        if state == CycleState.PREPARE_DIG:
-            # boom & stick down/out, bucket open, body facing pile
-            return [0.0, -1.20, -2.20, -0.50]
-
-        elif state == CycleState.SCOOP_AND_SLEW:
-            # start curling bucket + pulling stick, begin slewing body left toward dump
-            return [0.5, -1.10, -1.80, -2.20]
-
-        elif state == CycleState.LIFT_AND_ALIGN_DUMP:
-            # raise boom with load, rotate more toward dump
-            return [1.0, -0.40, -0.90, -2.20]
-
-        elif state == CycleState.DUMP:
-            # keep body at dump angle, open bucket
-            return [1.0, -0.40, -0.90, -0.50]
-
-        elif state == CycleState.RETURN_HOME:
-            # rotate body back toward pile, neutral pose
-            return [0.0, -0.60, -1.20, -1.20]
+        # Poses come from the model profile (excavation_cycle section). v1 poses:
+        #   PREPARE_DIG         [0.0, -1.20, -2.20, -0.50]
+        #   SCOOP_AND_SLEW      [0.5, -1.10, -1.80, -2.20]
+        #   LIFT_AND_ALIGN_DUMP [1.0, -0.40, -0.90, -2.20]
+        #   DUMP                [1.0, -0.40, -0.90, -0.50]
+        #   RETURN_HOME         [0.0, -0.60, -1.20, -1.20]
+        if state.name in self.poses:
+            return list(self.poses[state.name])
 
         # fallback
         return self.q[:]

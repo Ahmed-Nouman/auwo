@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Gazebo Harmonic launcher for excavator_description (ROS 2 Jazzy)
+# Gazebo Harmonic launcher for the AUWO excavator (ROS 2 Jazzy).
+# excavator_model:=v1 (excavator_description) or v2 (excavator_v2_description).
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from launch.actions import (
     TimerAction,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.event_handlers import OnProcessExit
@@ -30,6 +32,14 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
+
+from excavator_models import (
+    apply_sim_patches,
+    default_model,
+    load_profile,
+    process_xacro,
+    resolve_package_uris,
+)
 
 # Same transport partition for gz sim, bridges, and ros_gz_sim create (must match).
 _GZ_TRANSPORT_ENV = {
@@ -120,64 +130,38 @@ def _register_local_model(pkg_share: str):
             pass
 
 
-def _write_rviz_description_files(
-    excavator_pkg_share: str,
-    excavator_xacro: str,
-    truck_pkg_share: str,
-    _truck_content_unused: str | None,
-) -> tuple[str, str]:
-    """Write excavator and truck URDF to temp files for RViz (keep package:// so RViz resolves meshes). Returns (excavator_path, truck_path)."""
-    out_excavator = os.path.join(tempfile.gettempdir(), 'excavator_rviz.urdf')
-    result = subprocess.run(
-        ['xacro', excavator_xacro, 'use_sim:=true', '-o', out_excavator],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"xacro excavator for RViz failed: {result.stderr or result.stdout}")
+def _excavator_urdf_files(profile, model_override: str = '') -> tuple[str, str]:
+    """Write the RViz/RSP URDF and the Gazebo URDF of the selected excavator model.
 
-    # SIM-ONLY: Zero base_to_base_link rpy in RViz URDF too.
-    # RSP uses this file to publish TF. If it contains rpy="0 0 3.14159",
-    # the 180° propagates through the kinematic chain causing -180° roll on
-    # the bucket frame. With rpy="0 0 0" here AND spawn_Y=0 on the static TF,
-    # all frames are consistent with Gazebo physics.
-    with open(out_excavator, 'r') as _f:
-        _rviz_content = _f.read()
-    _marker = 'name="base_to_base_link"'
-    if _marker in _rviz_content:
-        _start = _rviz_content.index(_marker)
-        _end = _rviz_content.index('</joint>', _start) + len('</joint>')
-        _block = _rviz_content[_start:_end]
-        import re as _re2
-        _fixed = _re2.sub(r'rpy="[^"]*"', 'rpy="0 0 0"', _block)
-        _rviz_content = _rviz_content[:_start] + _fixed + _rviz_content[_end:]
-        with open(out_excavator, 'w') as _f:
-            _f.write(_rviz_content)
+    RViz/RSP URDF : package:// kept (v1) or rewritten to file:// (v2, profile flag).
+    Gazebo URDF   : package:// replaced by absolute paths.
+    Both get the model's simulation-only patches (v1: base_to_base_link yaw and bucket
+    visual pitch zeroed, exactly as this launch file did before; v2: none).
+    Returns (rviz_path, gazebo_path).
+    """
+    if model_override:
+        profile = dict(profile, xacro_path=model_override)
+    if not os.path.isfile(profile['xacro_path']):
+        raise FileNotFoundError(f"Excavator xacro not found: {profile['xacro_path']}")
+    urdf = apply_sim_patches(process_xacro(profile, {'use_sim': 'true'}), profile)
 
-    # Also zero the bucket visual rpy="0 3.14159 0".
-    # That pitch flip was authored to compensate for the base_to_base_link
-    # 180° yaw in the physical twin. With base_to_base_link now zeroed for
-    # sim, the bucket mesh appears upside down without this fix.
-    _bmarker = '<link name="bucket">'
-    if _bmarker in _rviz_content:
-        _bs = _rviz_content.index(_bmarker)
-        _be = _rviz_content.index('</link>', _bs) + len('</link>')
-        _bblock = _rviz_content[_bs:_be]
-        # Only zero visual origin rpys, not collision
-        _bparts = _bblock.split('<visual>')
-        for _bi in range(1, len(_bparts)):
-            _vend = _bparts[_bi].index('</visual>')
-            _visual = _bparts[_bi][:_vend]
-            _visual = _re2.sub(r'rpy="[^"]*"', 'rpy="0 0 0"', _visual)
-            _bparts[_bi] = _visual + _bparts[_bi][_vend:]
-        _bblock_fixed = '<visual>'.join(_bparts)
-        _rviz_content = _rviz_content[:_bs] + _bblock_fixed + _rviz_content[_be:]
-        with open(out_excavator, 'w') as _f:
-            _f.write(_rviz_content)
+    suffix = '' if profile['model'] == 'v1' else '_' + profile['model']
+    tmp = tempfile.gettempdir()
+    rviz_path = os.path.join(tmp, f'excavator{suffix}_rviz.urdf')
+    gz_path = os.path.join(tmp, f'excavator{suffix}_resolved.urdf')
+    with open(rviz_path, 'w') as f:
+        f.write(resolve_package_uris(urdf, profile, scheme='file'))
+    with open(gz_path, 'w') as f:
+        f.write(resolve_package_uris(urdf, profile, scheme='path', force=True))
+    return rviz_path, gz_path
 
+
+def _truck_rviz_file(truck_pkg_share: str) -> str:
+    """Truck URDF for RViz (STL visual, package:// kept)."""
     out_truck = os.path.join(tempfile.gettempdir(), 'truck_rviz.urdf')
     truck_xacro = os.path.join(truck_pkg_share, 'urdf', 'truck.urdf.xacro')
+    minimal = ('<?xml version="1.0"?><robot name="truck"><link name="base_link"><visual>'
+               '<geometry><box size="0.1 0.1 0.1"/></geometry></visual></link></robot>')
     if os.path.isfile(truck_xacro):
         result = subprocess.run(
             ['xacro', truck_xacro, 'pete_visual_ext:=stl', 'pete_visual_rpy:=0 0 0', '-o', out_truck],
@@ -187,12 +171,11 @@ def _write_rviz_description_files(
         )
         if result.returncode != 0:
             with open(out_truck, 'w') as f:
-                f.write('<?xml version="1.0"?><robot name="truck"><link name="base_link"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link></robot>')
-        # else: xacro wrote out_truck with package:// so RViz can resolve meshes
+                f.write(minimal)
     else:
         with open(out_truck, 'w') as f:
-            f.write('<?xml version="1.0"?><robot name="truck"><link name="base_link"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link></robot>')
-    return out_excavator, out_truck
+            f.write(minimal)
+    return out_truck
 
 
 def _generate_truck_urdf(truck_pkg_share: str) -> tuple[str, str]:
@@ -222,75 +205,24 @@ def _generate_truck_urdf(truck_pkg_share: str) -> tuple[str, str]:
     return out_path, content
 
 
-def _generate_excavator_urdf_resolved(pkg_share: str, model_path: str) -> tuple[str, str]:
-    """Run xacro on excavator, resolve package:// to absolute paths; return (file_path, content)."""
-    if not os.path.isfile(model_path):
-        raise FileNotFoundError(f"Excavator xacro not found: {model_path}")
-    out_path = os.path.join(tempfile.gettempdir(), 'excavator_resolved.urdf')
-    result = subprocess.run(
-        ['xacro', model_path, 'use_sim:=true', '-o', out_path],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"xacro failed: {result.stderr or result.stdout}")
-    with open(out_path, 'r') as f:
-        content = f.read()
-    # Replace package:// so Gazebo can find meshes without package resolution
-    content = content.replace(
-        'package://excavator_description/',
-        pkg_share.rstrip('/') + '/',
-    )
-
-    # SIM-ONLY FIX: Zero out the rpy on base_to_base_link fixed joint.
-    # The URDF has rpy="0 0 3.14159" there for the physical twin, but in
-    # simulation ros_gz_sim spawns the physics body directly in world frame
-    # without composing through fixed joints. Keeping the 180° yaw causes it
-    # to propagate through the kinematic chain, adding a spurious 180° roll
-    # to all child frames (visible as 180° roll on bucket in tf2_echo output).
-    # We patch it out here in the Gazebo-only resolved URDF using simple string
-    # replacement — the source URDF on disk is never modified.
-    # Find the base_to_base_link joint block and replace its origin rpy only.
-    _marker = 'name="base_to_base_link"'
-    if _marker in content:
-        _start = content.index(_marker)
-        _end = content.index('</joint>', _start) + len('</joint>')
-        _joint_block = content[_start:_end]
-        # Replace whatever rpy is in the origin tag within this joint block
-        import re as _re
-        _fixed = _re.sub(r'rpy="[^"]*"', 'rpy="0 0 0"', _joint_block)
-        content = content[:_start] + _fixed + content[_end:]
-
-
-        # Also zero the bucket visual rpy="0 3.14159 0".
-        # That pitch flip was authored to compensate for the base_to_base_link
-        # 180° yaw in the physical twin. With base_to_base_link now zeroed for
-        # sim, the bucket mesh appears upside down without this fix.
-        _bmarker = '<link name="bucket">'
-        if _bmarker in content:
-            _bs = content.index(_bmarker)
-            _be = content.index('</link>', _bs) + len('</link>')
-            _bblock = content[_bs:_be]
-            # Only zero visual origin rpys, not collision
-            _bparts = _bblock.split('<visual>')
-            for _bi in range(1, len(_bparts)):
-                _vend = _bparts[_bi].index('</visual>')
-                _visual = _bparts[_bi][:_vend]
-                _visual = _re.sub(r'rpy="[^"]*"', 'rpy="0 0 0"', _visual)
-                _bparts[_bi] = _visual + _bparts[_bi][_vend:]
-            _bblock_fixed = '<visual>'.join(_bparts)
-            content = content[:_bs] + _bblock_fixed + content[_be:]
-    with open(out_path, 'w') as f:
-        f.write(content)
-    return out_path, content
-
-
-def generate_launch_description():
-    pkg_name = 'excavator_description'
+def _launch_setup(context, *args, **kwargs):
+    """Everything that depends on the selected excavator model."""
+    pkg_name = 'excavator_description'   # shared worlds / models / Gazebo model shim
     pkg_share = get_package_share_directory(pkg_name)
-    pkg_gazebo_share = get_package_share_directory('excavator_gazebo')
     truck_pkg_share = get_package_share_directory('truck_description')
+
+    cfg = context.launch_configurations
+    profile = load_profile(cfg.get('excavator_model', ''))
+    scene = profile.get('scene', {})
+
+    def _scene(arg, key):
+        value = cfg.get(arg, '').strip()
+        return value if value else str(scene.get(key, 0.0))
+
+    dumper_x = _scene('dumper_x', 'dumper_x')
+    dumper_y = _scene('dumper_y', 'dumper_y')
+    dumper_z = _scene('dumper_z', 'dumper_z')
+    dumper_yaw = _scene('dumper_yaw', 'dumper_yaw')
 
     _register_local_model(pkg_share)
 
@@ -301,34 +233,253 @@ def generate_launch_description():
         truck_urdf_path = None
         truck_urdf_content = None
 
-    # Temp files with URDF for RViz (excavator keeps package:// so RViz resolves meshes)
-    excavator_xacro = os.path.join(pkg_share, 'urdf', 'excavator.urdf.xacro')
+    # Excavator URDFs for RViz/RSP and for Gazebo (model-specific sim patches applied)
+    excavator_urdf_path = None
+    excavator_rviz_path = os.path.join(tempfile.gettempdir(), 'excavator_rviz.urdf')
     try:
-        excavator_rviz_path, truck_rviz_path = _write_rviz_description_files(
-            pkg_share, excavator_xacro, truck_pkg_share, truck_urdf_content or ''
-        )
-    except (FileNotFoundError, RuntimeError) as e:
-        excavator_rviz_path = os.path.join(tempfile.gettempdir(), 'excavator_rviz.urdf')
-        truck_rviz_path = os.path.join(tempfile.gettempdir(), 'truck_rviz.urdf')
-        # Ensure files exist so publish_robot_descriptions can read something
-        if not os.path.isfile(excavator_rviz_path) and os.path.isfile(excavator_xacro):
-            subprocess.run(['xacro', excavator_xacro, 'use_sim:=true', '-o', excavator_rviz_path],
-                          capture_output=True, timeout=10)
-        if not os.path.isfile(truck_rviz_path):
-            truck_xacro = os.path.join(truck_pkg_share, 'urdf', 'truck.urdf.xacro')
-            if os.path.isfile(truck_xacro):
-                subprocess.run(
-                    ['xacro', truck_xacro, 'pete_visual_ext:=stl', 'pete_visual_rpy:=0 0 0', '-o', truck_rviz_path],
-                    capture_output=True,
-                    timeout=10,
-                )
+        excavator_rviz_path, excavator_urdf_path = _excavator_urdf_files(
+            profile, cfg.get('model', '').strip())
+    except Exception as e:  # noqa: BLE001 - keep launching, report clearly
+        print(f'[excavator_gazebo] excavator URDF generation failed: {e}')
+    truck_rviz_path = _truck_rviz_file(truck_pkg_share)
+    print(f'[excavator_gazebo] excavator model {profile["model"]} ({profile["package"]})')
 
-    # Excavator URDF with resolved package:// for Gazebo when spawning with truck
-    excavator_model = excavator_xacro
-    try:
-        excavator_urdf_path, _ = _generate_excavator_urdf_resolved(pkg_share, excavator_model)
-    except (FileNotFoundError, RuntimeError):
-        excavator_urdf_path = None
+    robot_name = LaunchConfiguration('robot_name')
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    spawn_x = LaunchConfiguration('spawn_x')
+    spawn_y = LaunchConfiguration('spawn_y')
+    spawn_z = LaunchConfiguration('spawn_z')
+    spawn_R = LaunchConfiguration('spawn_R')
+    spawn_P = LaunchConfiguration('spawn_P')
+    spawn_Y = LaunchConfiguration('spawn_Y')
+    spawn_dumper = LaunchConfiguration('spawn_dumper')
+    controller_spawn_delay_sec = LaunchConfiguration('controller_spawn_delay_sec', default='25.0')
+
+    # Resource paths for Gazebo (package://<description>/... needs the share parent)
+    user_models = os.path.join(os.path.expanduser("~"), ".gz", "models")
+    share_parent = os.path.dirname(pkg_share)  # so package://excavator_description/meshes resolves
+    resource_parts = [
+        EnvironmentVariable('GZ_SIM_RESOURCE_PATH', default_value=''),
+        TextSubstitution(text=':' + share_parent),
+        TextSubstitution(text=':' + pkg_share),
+        TextSubstitution(text=':' + os.path.join(pkg_share, 'meshes')),
+        TextSubstitution(text=':' + os.path.join(pkg_share, 'models')),
+        TextSubstitution(text=':' + os.path.join(pkg_share, 'worlds')),
+        TextSubstitution(text=':' + user_models),
+    ]
+    if profile['share'] != pkg_share:
+        resource_parts += [
+            TextSubstitution(text=':' + os.path.dirname(profile['share'])),
+            TextSubstitution(text=':' + profile['share']),
+        ]
+    set_gz_resource_path = SetEnvironmentVariable(name='GZ_SIM_RESOURCE_PATH', value=resource_parts)
+
+    # RSP uses the patched RViz URDF (v1: base_to_base_link rpy="0 0 0") so TF
+    # chain is consistent with Gazebo physics — eliminates -180° roll on bucket.
+    with open(excavator_rviz_path, 'r') as _f:
+        _rsp_urdf = _f.read()
+
+    # robot_state_publisher
+    rsp = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='screen',
+        parameters=[{
+            'robot_description': _rsp_urdf,
+            'use_sim_time': False,
+            'publish_frequency': 50.0,
+            'ignore_timestamp': True,
+        }]
+    )
+
+    # world -> base_link static TF at spawn pose. z=0.0: spawn_z is the drop height;
+    # the robot settles to the ground. No yaw offset: v1's base_to_base_link 180° yaw
+    # is zeroed in the sim URDFs, v2 has none.
+    excavator_world_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='excavator_world_tf',
+        arguments=[
+            '--x', spawn_x, '--y', spawn_y, '--z', '0.0',
+            '--roll', '0.0', '--pitch', '0.0',
+            '--yaw', spawn_Y,
+            '--frame-id', 'world', '--child-frame-id', 'base_link',
+        ],
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+    spawn_Y_gz = spawn_Y
+
+    # Publish excavator and truck URDF to separate topics for RViz (paths as plain strings so they resolve reliably)
+    desc_publisher = Node(
+        package='excavator_gazebo',
+        executable='publish_robot_descriptions.py',
+        name='publish_robot_descriptions',
+        output='screen',
+        parameters=[{
+            'excavator_description_file': excavator_rviz_path,
+            'truck_description_file': truck_rviz_path,
+        }],
+    )
+
+    # Spawn excavator from the pre-resolved URDF file (package:// already replaced).
+    # Using -file avoids gz transport service-discovery issues that -topic can hit.
+    if excavator_urdf_path is not None:
+        spawn_source = ['-file', excavator_urdf_path]
+    else:
+        spawn_source = ['-topic', 'robot_description']
+    spawner = Node(
+        package='ros_gz_sim',
+        executable='create',
+        name='create',
+        output='screen',
+        arguments=[
+            '-world', 'default',
+            *spawn_source,
+            '-name', robot_name,
+            '-allow_renaming', 'true',
+            '-x', spawn_x, '-y', spawn_y, '-z', spawn_z,
+            '-R', spawn_R, '-P', spawn_P, '-Y', spawn_Y_gz,
+        ],
+        additional_env=_GZ_TRANSPORT_ENV,
+    )
+
+    # ---- Auto-spawn controllers after spawn has run ----
+    controllers_yaml = profile['controllers_path']
+
+    def _spawner(controller):
+        return ExecuteProcess(
+            cmd=[
+                'ros2', 'run', 'controller_manager', 'spawner',
+                controller,
+                '--controller-manager', '/controller_manager',
+                '--param-file', controllers_yaml,
+                '--controller-manager-timeout', '30',
+                '--switch-timeout', '15',
+            ],
+            output='screen'
+        )
+
+    spawner_jsb = _spawner('joint_state_broadcaster')
+    spawner_arm = _spawner('arm_trajectory_controller')
+
+    # NOTE: arm_position_controller is declared in controllers.yaml but intentionally
+    # NOT spawned here. It is not a hardware controller — /arm_position_controller/commands
+    # is just a ROS topic that trajectory_command_adapter subscribes to. Spawning it as a
+    # ros2_control controller would conflict with arm_trajectory_controller over the same
+    # joints (both claim position command interfaces on the same 4 joints).
+    #
+    # The command flow is:
+    #   twin_router → /arm_position_controller/commands (Float64MultiArray, topic only)
+    #   → trajectory_command_adapter → /arm_trajectory_controller/joint_trajectory
+    #   → arm_trajectory_controller (the actual active hardware controller)
+
+    # Chain spawners: JSB first, then trajectory controller, then model extras
+    # (v2: blade_controller, linkage_controller). Parallel spawners race controller_manager.
+    chain = [spawner_jsb, spawner_arm] + [_spawner(c) for c in profile['extra_controllers']]
+    chain_handlers = [
+        RegisterEventHandler(OnProcessExit(target_action=a, on_exit=[b]))
+        for a, b in zip(chain[:-1], chain[1:])
+    ]
+
+    # Controllers after model is in world and /clock bridge is up.
+    spawn_after_gz = TimerAction(
+        period=controller_spawn_delay_sec,
+        actions=[spawner_jsb, *chain_handlers],
+    )
+
+    model_actions = []
+    if profile['linkage'].get('enabled'):
+        # v2: hydraulic cylinders + bucket linkage follow the arm joints
+        model_actions.append(Node(
+            package='excavator_models',
+            executable='linkage_state_publisher',
+            name='linkage_state_publisher',
+            output='screen',
+            parameters=[{
+                'excavator_model': profile['model'],
+                'mode': 'controller',
+                'use_sim_time': use_sim_time,
+            }],
+        ))
+
+    # ---- Dump truck (when spawn_dumper is true and truck URDF was generated) ----
+    truck_group_actions = []
+    if truck_urdf_path is not None and truck_urdf_content is not None:
+        truck_spawn = Node(
+            package='ros_gz_sim',
+            executable='create',
+            name='create_truck',
+            output='screen',
+            arguments=[
+                '-world', 'default',
+                '-file', truck_urdf_path,
+                '-name', 'truck',
+                '-allow_renaming', 'true',
+                '-x', dumper_x, '-y', dumper_y, '-z', dumper_z,
+                '-R', '0', '-P', '0', '-Y', dumper_yaw,
+            ],
+            additional_env=_GZ_TRANSPORT_ENV,
+            condition=IfCondition(spawn_dumper),
+        )
+
+        # Stationary dumper: robot_state_publisher publishes the link tree (base_link -> dump_bed) for RViz
+        truck_rsp = Node(
+            package='robot_state_publisher',
+            executable='robot_state_publisher',
+            name='robot_state_publisher_truck',
+            output='screen',
+            # Do not publish to /truck_robot_description: RViz uses that topic from
+            # publish_robot_descriptions (STL). RSP only needs TF; GLB URDF stays off RViz path.
+            remappings=[
+                ('robot_description', '/truck_robot_description_internal'),
+                # Truck RSP must not publish/consume /joint_states (excavator topic).
+                ('joint_states', '/truck/joint_states'),
+            ],
+            parameters=[{
+                'robot_description': truck_urdf_content,
+                'use_sim_time': use_sim_time,
+                'frame_prefix': 'truck/',
+                'publish_frequency': 50.0,
+            }],
+            condition=IfCondition(spawn_dumper),
+        )
+
+        # World -> truck/base_link at spawn pose so truck is positioned in RViz (use_sim_time so TF matches /clock)
+        truck_static_tf = Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='truck_world_tf',
+            arguments=[
+                '--x', dumper_x, '--y', dumper_y, '--z', dumper_z,
+                '--yaw', dumper_yaw,
+                '--frame-id', 'world', '--child-frame-id', 'truck/base_link',
+            ],
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=IfCondition(spawn_dumper),
+        )
+
+        truck_group_actions = [truck_spawn, truck_rsp, truck_static_tf]
+
+    actions = [
+        set_gz_resource_path,
+        rsp,
+        excavator_world_tf,
+        desc_publisher,
+        spawner,
+        spawn_after_gz,
+        *model_actions,
+    ]
+    if truck_group_actions:
+        truck_group = GroupAction(condition=IfCondition(spawn_dumper), actions=truck_group_actions)
+        # Delay truck-related spawn/actions so the excavator spawn is deterministic first.
+        actions.append(TimerAction(period=6.0, actions=[truck_group]))
+    return actions
+
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('excavator_description')
+    pkg_gazebo_share = get_package_share_directory('excavator_gazebo')
 
     # Local world (avoid Fuel/network)
     default_world = os.path.join(pkg_share, 'worlds', 'empty.sdf')
@@ -336,31 +487,19 @@ def generate_launch_description():
 
     # ---- Args ----
     world = LaunchConfiguration('world')
-    model = LaunchConfiguration('model')  # path to urdf/xacro
-    robot_name = LaunchConfiguration('robot_name')
-    use_sim_time = LaunchConfiguration('use_sim_time')
     headless = LaunchConfiguration('headless')
     unified_gui = LaunchConfiguration('gazebo_unified_gui')
     gazebo_verbose = LaunchConfiguration('gazebo_verbose')
     physics_engine = LaunchConfiguration('physics_engine')  # selector
-    spawn_dumper = LaunchConfiguration('spawn_dumper')
 
-    # Spawn pose args
-    spawn_x = LaunchConfiguration('spawn_x')
-    spawn_y = LaunchConfiguration('spawn_y')
-    spawn_z = LaunchConfiguration('spawn_z')
-    spawn_R = LaunchConfiguration('spawn_R')
-    spawn_P = LaunchConfiguration('spawn_P')
-    spawn_Y = LaunchConfiguration('spawn_Y')
-
-    dumper_x = LaunchConfiguration('dumper_x')
-    dumper_y = LaunchConfiguration('dumper_y')
-    dumper_z = LaunchConfiguration('dumper_z')
-    dumper_yaw = LaunchConfiguration('dumper_yaw')
-    # Keep a safe fallback so this launch still works even if a parent launch
-    # forgets to declare/forward this argument.
-    controller_spawn_delay_sec = LaunchConfiguration('controller_spawn_delay_sec', default='25.0')
-
+    excavator_model_arg = DeclareLaunchArgument(
+        'excavator_model',
+        default_value=default_model(),
+        description=(
+            'Excavator model: v1 (excavator_description, original) or v2 '
+            '(excavator_v2_description, new). Default from AUWO_EXCAVATOR_MODEL, else v2.'
+        ),
+    )
     world_arg = DeclareLaunchArgument(
         'world',
         default_value=world_file,
@@ -368,8 +507,8 @@ def generate_launch_description():
     )
     model_arg = DeclareLaunchArgument(
         'model',
-        default_value=PathJoinSubstitution([FindPackageShare(pkg_name), 'urdf', 'excavator.urdf.xacro']),
-        description='Path to top-level Xacro/URDF'
+        default_value='',
+        description='Optional path to a top-level Xacro/URDF (overrides the excavator_model xacro)'
     )
     robot_name_arg = DeclareLaunchArgument('robot_name', default_value='excavator')
     use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='true')
@@ -407,11 +546,15 @@ def generate_launch_description():
         default_value='false',
         description='Spawn dump truck model (truck.urdf.xacro) for excavation scenario',
     )
-    # Default truck pose: spaced apart from excavator to avoid overlap
-    dumper_x_arg = DeclareLaunchArgument('dumper_x', default_value='4.0')
-    dumper_y_arg = DeclareLaunchArgument('dumper_y', default_value='3.0')
-    dumper_z_arg = DeclareLaunchArgument('dumper_z', default_value='0.5')
-    dumper_yaw_arg = DeclareLaunchArgument('dumper_yaw', default_value='0.0')
+    # Truck pose: empty = take it from the excavator model profile (scene section)
+    dumper_x_arg = DeclareLaunchArgument('dumper_x', default_value='',
+                                         description='Truck x (empty: from model profile)')
+    dumper_y_arg = DeclareLaunchArgument('dumper_y', default_value='',
+                                         description='Truck y (empty: from model profile)')
+    dumper_z_arg = DeclareLaunchArgument('dumper_z', default_value='',
+                                         description='Truck z (empty: from model profile)')
+    dumper_yaw_arg = DeclareLaunchArgument('dumper_yaw', default_value='',
+                                           description='Truck yaw (empty: from model profile)')
 
     controller_spawn_delay_sec_arg = DeclareLaunchArgument(
         'controller_spawn_delay_sec',
@@ -434,96 +577,6 @@ def generate_launch_description():
             EnvironmentVariable('GZ_SIM_SYSTEM_PLUGIN_PATH', default_value=''),
             TextSubstitution(text=':/opt/ros/jazzy/lib'),
         ]
-    )
-
-    # Resource paths for Gazebo (package://excavator_description/... needs share parent)
-    user_models = os.path.join(os.path.expanduser("~"), ".gz", "models")
-    share_parent = os.path.dirname(pkg_share)  # so package://excavator_description/meshes resolves
-    set_gz_resource_path = SetEnvironmentVariable(
-        name='GZ_SIM_RESOURCE_PATH',
-        value=[
-            EnvironmentVariable('GZ_SIM_RESOURCE_PATH', default_value=''),
-            TextSubstitution(text=':' + share_parent),
-            TextSubstitution(text=':' + pkg_share),
-            TextSubstitution(text=':' + os.path.join(pkg_share, 'meshes')),
-            TextSubstitution(text=':' + os.path.join(pkg_share, 'models')),
-            TextSubstitution(text=':' + os.path.join(pkg_share, 'worlds')),
-            TextSubstitution(text=':' + user_models),
-        ]
-    )
-
-    # RSP uses the patched RViz URDF (base_to_base_link rpy="0 0 0") so TF
-    # chain is consistent with Gazebo physics — eliminates -180° roll on bucket.
-    with open(excavator_rviz_path, 'r') as _f:
-        _rsp_urdf = _f.read()
-
-    # robot_state_publisher
-    rsp = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
-        output='screen',
-        parameters=[{
-            'robot_description': _rsp_urdf,
-            'use_sim_time': False,
-            'publish_frequency': 50.0,
-            'ignore_timestamp': True,
-        }]
-    )
-
-
-    # FIX: The excavator URDF has rpy="0 0 3.14159" on the base_to_base_link fixed
-    # joint — intentional for the physical twin where localisation compensates.
-    # In simulation, ros_gz_sim spawns the physics body at spawn_Y directly and
-    # does NOT compose through fixed URDF joints, so the visual mesh ends up 180°
-    # from where physics placed it (arm on wrong side).
-    #
-    # The URDF is left unchanged. Instead the static TF yaw is offset by +3.14159
-    # (the same value as the URDF fixed joint) so that RViz resolves all child
-    # frames (base, boom, stick, bucket) consistently with Gazebo physics.
-    #
-    # z=0.0: spawn_z is the drop height; robot settles to ground, TF must match.
-    # world -> base_link static TF published at spawn_Y + 3.14159.
-    #
-    # RViz uses the ORIGINAL URDF (unmodified, with rpy="0 0 3.14159" on
-    # base_to_base_link). So the static TF must offset by +3.14159 to make
-    # RViz render all child meshes (base, body, boom, stick, bucket) in the
-    # correct world orientation.
-    #
-    # Gazebo uses a SIM-ONLY patched URDF where base_to_base_link rpy="0 0 0"
-    # (see _generate_excavator_urdf_resolved). So the Gazebo spawner uses
-    # spawn_Y directly (spawn_Y_gz = spawn_Y, no offset needed).
-    #
-    # Result: both RViz and Gazebo show the robot at the same world orientation,
-    # with no spurious 180° roll accumulating through the kinematic chain.
-    excavator_world_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='excavator_world_tf',
-        arguments=[
-            '--x', spawn_x, '--y', spawn_y, '--z', '0.0',
-            '--roll', '0.0', '--pitch', '0.0',
-            '--yaw', spawn_Y,  # No offset: base_to_base_link rpy is zeroed in sim URDFs
-            '--frame-id', 'world', '--child-frame-id', 'base_link',
-        ],
-        parameters=[{'use_sim_time': use_sim_time}],
-    )
-
-    # spawn_Y_gz == spawn_Y: the 180° base_to_base_link offset is now zeroed
-    # in the Gazebo-only resolved URDF (_generate_excavator_urdf_resolved),
-    # so no extra rotation is needed at spawn time.
-    spawn_Y_gz = spawn_Y
-
-    # Publish excavator and truck URDF to separate topics for RViz (paths as plain strings so they resolve reliably)
-    desc_publisher = Node(
-        package='excavator_gazebo',
-        executable='publish_robot_descriptions.py',
-        name='publish_robot_descriptions',
-        output='screen',
-        parameters=[{
-            'excavator_description_file': excavator_rviz_path,
-            'truck_description_file': truck_rviz_path,
-        }],
     )
 
     # Split: server (-s) + delayed GUI (-g). Unified: single process (some GPUs/desktops are smoother).
@@ -579,41 +632,6 @@ def generate_launch_description():
         condition=IfCondition(use_split_gui),
     )
 
-    # Spawn excavator from the pre-resolved URDF file (package:// already replaced).
-    # Using -file avoids gz transport service-discovery issues that -topic can hit.
-    if excavator_urdf_path is not None:
-        spawner = Node(
-            package='ros_gz_sim',
-            executable='create',
-            name='create',
-            output='screen',
-            arguments=[
-                '-world', 'default',
-                '-file', excavator_urdf_path,
-                '-name', robot_name,
-                '-allow_renaming', 'true',
-                '-x', spawn_x, '-y', spawn_y, '-z', spawn_z,
-                '-R', spawn_R, '-P', spawn_P, '-Y', spawn_Y_gz,
-            ],
-            additional_env=_GZ_TRANSPORT_ENV,
-        )
-    else:
-        spawner = Node(
-            package='ros_gz_sim',
-            executable='create',
-            name='create',
-            output='screen',
-            arguments=[
-                '-world', 'default',
-                '-topic', 'robot_description',
-                '-name', robot_name,
-                '-allow_renaming', 'true',
-                '-x', spawn_x, '-y', spawn_y, '-z', spawn_z,
-                '-R', spawn_R, '-P', spawn_P, '-Y', spawn_Y_gz,
-            ],
-            additional_env=_GZ_TRANSPORT_ENV,
-        )
-
     # Bridge nodes must use use_sim_time:=false so they do not block waiting for /clock while publishing it.
     clock_bridge_config = os.path.join(pkg_gazebo_share, 'config', 'clock_bridge.yaml')
     clock_bridge = Node(
@@ -646,132 +664,8 @@ def generate_launch_description():
     bridge_clock_early = TimerAction(period=1.5, actions=[clock_bridge])
     bridge_sensors_delayed = TimerAction(period=5.0, actions=[sensors_bridge])
 
-    # ---- Auto-spawn controllers after spawn has run ----
-    controllers_yaml = PathJoinSubstitution([
-        FindPackageShare(pkg_name),
-        'config',
-        'controllers.yaml'
-    ])
-
-    spawner_jsb = ExecuteProcess(
-        cmd=[
-            'ros2', 'run', 'controller_manager', 'spawner',
-            'joint_state_broadcaster',
-            '--controller-manager', '/controller_manager',
-            '--param-file', controllers_yaml,
-            '--controller-manager-timeout', '30',
-            '--switch-timeout', '15',
-        ],
-        output='screen'
-    )
-
-    spawner_arm = ExecuteProcess(
-        cmd=[
-            'ros2', 'run', 'controller_manager', 'spawner',
-            'arm_trajectory_controller',
-            '--controller-manager', '/controller_manager',
-            '--param-file', controllers_yaml,
-            '--controller-manager-timeout', '30',
-            '--switch-timeout', '15',
-        ],
-        output='screen'
-    )
-
-    # NOTE: arm_position_controller is declared in controllers.yaml but intentionally
-    # NOT spawned here. It is not a hardware controller — /arm_position_controller/commands
-    # is just a ROS topic that trajectory_command_adapter subscribes to. Spawning it as a
-    # ros2_control controller would conflict with arm_trajectory_controller over the same
-    # joints (both claim position command interfaces on the same 4 joints).
-    #
-    # The command flow is:
-    #   twin_router → /arm_position_controller/commands (Float64MultiArray, topic only)
-    #   → trajectory_command_adapter → /arm_trajectory_controller/joint_trajectory
-    #   → arm_trajectory_controller (the actual active hardware controller)
-
-    # Chain spawners: JSB first, then trajectory controller.
-    # Parallel spawners race controller_manager and often never reach ACTIVE.
-    after_jsb_spawn_arm = RegisterEventHandler(
-        OnProcessExit(target_action=spawner_jsb, on_exit=[spawner_arm]),
-    )
-
-    # Controllers after model is in world and /clock bridge is up.
-    spawn_after_gz = TimerAction(
-        period=controller_spawn_delay_sec,
-        actions=[spawner_jsb, after_jsb_spawn_arm],
-    )
-
-    # ---- Dump truck (when spawn_dumper is true and truck URDF was generated) ----
-    truck_group_actions = []
-    if truck_urdf_path is not None and truck_urdf_content is not None:
-        truck_spawn = Node(
-            package='ros_gz_sim',
-            executable='create',
-            name='create_truck',
-            output='screen',
-            arguments=[
-                '-world', 'default',
-                '-file', truck_urdf_path,
-                '-name', 'truck',
-                '-allow_renaming', 'true',
-                '-x', dumper_x, '-y', dumper_y, '-z', dumper_z,
-                '-R', '0', '-P', '0', '-Y', dumper_yaw,
-            ],
-            additional_env=_GZ_TRANSPORT_ENV,
-            condition=IfCondition(spawn_dumper),
-        )
-
-        # Stationary dumper: robot_state_publisher publishes the link tree (base_link -> dump_bed) for RViz
-        truck_rsp = Node(
-            package='robot_state_publisher',
-            executable='robot_state_publisher',
-            name='robot_state_publisher_truck',
-            output='screen',
-            # Do not publish to /truck_robot_description: RViz uses that topic from
-            # publish_robot_descriptions (STL). RSP only needs TF; GLB URDF stays off RViz path.
-            remappings=[
-                ('robot_description', '/truck_robot_description_internal'),
-                # FIX: truck RSP was publishing to /joint_states (default topic),
-                # colliding with the excavator's joint_state_broadcaster output.
-                # Excavator RSP was consuming truck joint data instead of real
-                # excavator joints → all arm TF transforms missing in RViz.
-                # The truck is static (no moving joints) so its /joint_states
-                # output is empty/irrelevant — redirect it to an unused topic.
-                ('joint_states', '/truck/joint_states'),
-            ],
-            parameters=[{
-                'robot_description': truck_urdf_content,
-                'use_sim_time': use_sim_time,
-                'frame_prefix': 'truck/',
-                'publish_frequency': 50.0,
-            }],
-            condition=IfCondition(spawn_dumper),
-        )
-
-        # World -> truck/base_link at spawn pose so truck is positioned in RViz (use_sim_time so TF matches /clock)
-        truck_static_tf = Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='truck_world_tf',
-            arguments=[
-                '--x', dumper_x, '--y', dumper_y, '--z', dumper_z,
-                '--yaw', dumper_yaw,
-                '--frame-id', 'world', '--child-frame-id', 'truck/base_link',
-            ],
-            parameters=[{'use_sim_time': use_sim_time}],
-            condition=IfCondition(spawn_dumper),
-        )
-
-        truck_group_actions = [truck_spawn, truck_rsp, truck_static_tf]
-
-    truck_group = GroupAction(
-        condition=IfCondition(spawn_dumper),
-        actions=truck_group_actions,
-    ) if truck_group_actions else None
-
-    # Delay truck-related spawn/actions so excavator spawn from /robot_description is deterministic first.
-    truck_group_delayed = TimerAction(period=6.0, actions=[truck_group]) if truck_group is not None else None
-
-    launch_actions = [
+    return LaunchDescription([
+        excavator_model_arg,
         world_arg, model_arg, robot_name_arg, use_sim_time_arg, headless_arg,
         gazebo_unified_gui_arg,
         gazebo_verbose_arg,
@@ -780,19 +674,11 @@ def generate_launch_description():
         spawn_dumper_arg, dumper_x_arg, dumper_y_arg, dumper_z_arg, dumper_yaw_arg,
         controller_spawn_delay_sec_arg,
         set_gz_partition,
-        set_gz_resource_path,
         set_gz_plugin_path,
-        rsp,
-        excavator_world_tf,
-        desc_publisher,
+        # Model-dependent: resource path, RSP, TF, description topics, spawn, controllers, truck
+        OpaqueFunction(function=_launch_setup),
         gz_unified_group,
         gz_split_group,
-        spawner,
         bridge_clock_early,
         bridge_sensors_delayed,
-        spawn_after_gz,
-    ]
-    if truck_group_delayed is not None:
-        launch_actions.append(truck_group_delayed)
-
-    return LaunchDescription(launch_actions)
+    ])

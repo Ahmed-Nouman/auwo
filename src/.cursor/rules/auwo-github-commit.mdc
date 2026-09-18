@@ -1,0 +1,46 @@
+---
+description: GitHub commit conventions for AUWO main branch
+alwaysApply: true
+---
+
+# AUWO GitHub Commit Conventions
+
+When committing to the AUWO repository, use a **one-liner** describing what the commit did.
+
+## Format
+
+```
+<type>(<scope>): <short summary>
+```
+
+### Types
+
+| Type | Use for |
+|------|---------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code change, no behavior change |
+| `chore` | Build, config, tooling |
+
+### Scope (optional)
+
+Package name when scoped: `excavator_teleop`, `excavator_description`, `excavator_gazebo`, `excavator_moveit_config`, etc.
+
+### Examples
+
+```bash
+# ✅ GOOD
+feat(excavator_teleop): add trajectory smoothing to adapter
+fix(excavator_gazebo): correct GZ_PARTITION for bridge discovery
+docs: update README MoveIt troubleshooting
+chore: add ros-jazzy-gazebo-harmonic rule
+
+# ❌ BAD — vague
+fixed stuff
+updates
+```
+
+## Main branch
+
+- **Do not** `git push --force` to `main` unless explicitly requested and justified.
