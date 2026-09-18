@@ -59,11 +59,12 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 from std_srvs.srv import Trigger
+from visualization_msgs.msg import Marker, MarkerArray
 
 LATCHED = QoSProfile(depth=1,
                      durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -99,6 +100,21 @@ REACH_IN, REACH_OUT = 2.55, 4.20
 
 LIM_LO = np.array([-12.566, -1.400, -2.428, -2.000])
 LIM_HI = np.array([12.566, 0.200, 0.200, 2.000])
+
+# NOMINAL DIGGING POSTURE, taken from excavator_cycle.py - the hand-tuned cycle
+# that already works on this machine. Its dig pose is boom -1.20, stick -2.20:
+# boom DOWN, stick EXTENDED, which is how an excavator actually stands to dig.
+#
+# The IK has two elbow solutions and both satisfy the target. Without a
+# preference it was picking the folded-up one (boom -0.6 deg, stick +7.6 deg) -
+# geometrically valid, nothing like an excavator, and the source of the odd
+# postures. Branches are now scored by distance from this posture.
+NOMINAL = np.array([0.0, -1.00, -1.60, 0.0])
+POSTURE_W = np.array([0.0, 1.0, 1.0, 0.0])
+
+# The same file also shows the bucket convention: -0.50 open, -2.20 curled.
+# Curling is NEGATIVE. Commanding +60 deg drove the bucket the wrong way and
+# jammed it against its +2.0 limit, which is what /joint_states showed.
 JOINTS = ["body_rotation", "boom_rotation", "stick_rotation", "bucket_rotation"]
 
 
@@ -252,8 +268,11 @@ def ik(x, y, z, bucket=0.0):
         err = float(np.linalg.norm(fk(q) - np.array([x, y, z])))
         if err > 0.05:
             continue
-        if best is None or err < best[1]:
-            best = (q, err)
+        # prefer the excavator-like elbow, not merely a reachable one
+        posture = float(np.linalg.norm((q - NOMINAL) * POSTURE_W))
+        score = err * 10.0 + posture
+        if best is None or score < best[1]:
+            best = (q, score)
     return None if best is None else best[0]
 
 
@@ -264,28 +283,47 @@ class Executor(Node):
         p = self.declare_parameter
         p("rate_hz", 20.0)
         p("joint_speed", 0.35)
+        p("arrive_tol_deg", 6.0)    # a leg is done when every joint is this close
+        p("arrive_timeout_s", 8.0)  # ... or after this long, whichever first
         p("approach_h", 0.8)
-        p("drag_length", 0.8)
+        p("drag_length", 1.2)
         p("lift_h", 1.2)
+        # Absolute bearing in base_link by default: a spoil pile or a truck
+        # does not move when the dig point shifts. Relative-to-dig made the
+        # dump wander with the target, which reads as the machine choosing a
+        # new place to work each cycle.
         p("dump_bearing", 90.0)
+        p("dump_relative", False)
         p("dump_radius", 3.8)
         p("dump_height", 1.5)
-        p("attack_deg", -35.0)
-        p("curl_deg", 60.0)
+        # BUCKET SIGN, from the working excavator_cycle package in this repo:
+        #   BUCKET_MIN, BUCKET_MAX = -2.395, -0.357   and its poses use
+        #   -0.50 = open (teeth presented to the soil), -2.20 = curled (holding)
+        # The usable range is entirely NEGATIVE. The previous +60 deg "curl"
+        # was the opposite direction and outside it, so the bucket opened
+        # during the drag instead of closing - exactly as observed.
+        p("attack_deg", -30.0)
+        p("curl_deg", -110.0)
         p("cut_half_width", 0.35)   # half the bucket width, for terrain cutting
+        p("relatch", False)         # re-read the planner's target each cycle?
 
         g = self.get_parameter
         self.hz = float(g("rate_hz").value)
         self.dt = 1.0 / self.hz
         self.speed = float(g("joint_speed").value)
+        self.arrive_tol = math.radians(float(g("arrive_tol_deg").value))
+        self.arrive_timeout = float(g("arrive_timeout_s").value)
 
-        self.target = None          # (x, y, z) in base_link
+        self.target = None          # (x, y, z) from the planner, live
+        self.locked = None          # the target this run is working
         self.measured = None
         self.running = False
-        self.plan = []              # [(label, q)]
+        self.plan = []
+        self.locked = None              # [(label, q)]
         self.cut = None             # swath cut by the current cycle
         self.leg = 0
         self.t_leg = 0.0
+        self.t_hold = 0.0           # time spent waiting for the arm to arrive
         self.q_from = None
         self.cycles = 0
 
@@ -299,14 +337,31 @@ class Executor(Node):
         # bookkeeping.
         self.pub_cut = self.create_publisher(
             Float64MultiArray, "/auwo/material_removed", 10)
+        # Where it is digging and where it is dumping, drawn in the 3D view.
+        # Without this the 90 degree swing to the dump looks like the machine
+        # wandering off to work somewhere else.
+        self.pub_marks = self.create_publisher(
+            MarkerArray, "/auwo/dig_markers", 1)
         self.create_subscription(PoseStamped, "/auwo/dig_target",
                                  self._on_target, 1)
+        # An operator-chosen dump point overrides dump_bearing / dump_radius.
+        # A spoil pile or a truck is a place, not an angle.
+        self.dump_point = None
+        self.create_subscription(PointStamped, "/auwo/dump_point",
+                                 self._on_dump_point, 1)
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.have_urdf = False
         self.create_subscription(String, "/robot_description",
                                  self._on_urdf, LATCHED)
         self.create_service(Trigger, "/auwo/start_dig", self._srv_start)
         self.create_service(Trigger, "/auwo/stop_dig", self._srv_stop)
+
+        # Same two actions over a topic. Service discovery through a websocket
+        # bridge is not always reliable, and a dashboard button that sometimes
+        # is not there is worse than no button. A publish always arrives.
+        #   ros2 topic pub --once /auwo/dig_command std_msgs/msg/String "{data: start}"
+        self.create_subscription(String, "/auwo/dig_command",
+                                 self._on_command, 10)
 
         self.get_logger().info(
             "excavation executor ready -> /auwo/cmd/auto "
@@ -339,32 +394,53 @@ class Executor(Node):
         self.target = (msg.pose.position.x, msg.pose.position.y,
                        msg.pose.position.z)
 
+    def _on_dump_point(self, msg):
+        self.dump_point = (msg.point.x, msg.point.y)
+        self.get_logger().info("dump point set to (%.2f, %.2f)"
+                               % self.dump_point)
+
     def _on_state(self, msg):
         pos = dict(zip(msg.name, msg.position))
         if all(j in pos for j in JOINTS):
             self.measured = np.array([pos[j] for j in JOINTS])
 
-    def _srv_start(self, req, resp):
+    def _on_command(self, msg):
+        c = msg.data.strip().lower()
+        if c in ("start", "go", "dig"):
+            ok, why = self._start()
+            self.get_logger().info(why if ok else "cannot start: %s" % why)
+        elif c in ("stop", "halt", "abort"):
+            self._halt("stopped by dashboard")
+        else:
+            self.get_logger().warn(
+                "unknown dig command '%s' (want 'start' or 'stop')" % msg.data)
+
+    def _start(self):
+        """Shared by the service and the topic. Returns (ok, message)."""
         if self.target is None:
-            resp.success = False
-            resp.message = "no dig target on /auwo/dig_target"
-            return resp
+            return False, "no dig target on /auwo/dig_target"
         if self.measured is None:
-            resp.success = False
-            resp.message = "no /joint_states"
-            return resp
+            return False, "no /joint_states"
         if not self.have_urdf:
             self.get_logger().warn(
                 "no /robot_description yet - planning with fallback geometry")
+        # Latch the target for the whole run. The planner keeps publishing, and
+        # while the terrain does not change its choice wanders between cells of
+        # near-equal remaining material - which showed up as the machine moving
+        # somewhere new after every cycle. Set relatch:=true to follow it.
+        self.locked = tuple(self.target)
         if not self._build_plan():
-            resp.success = False
-            resp.message = "target unreachable: %.2f, %.2f, %.2f" % self.target
-            return resp
+            self.locked = None
+            return False, "target unreachable: %.2f, %.2f, %.2f" % self.target
         self.running = True
         self.cycles = 0
-        resp.success = True
-        resp.message = "digging at %.2f, %.2f, %.2f" % self.target
-        self.get_logger().info(resp.message)
+        return True, "digging at %.2f, %.2f, %.2f" % self.locked
+
+    def _srv_start(self, req, resp):
+        ok, why = self._start()
+        resp.success = ok
+        resp.message = why
+        self.get_logger().info(why if ok else "cannot start: %s" % why)
         return resp
 
     def _srv_stop(self, req, resp):
@@ -378,11 +454,12 @@ class Executor(Node):
             self.get_logger().info("halting: %s" % why)
         self.running = False
         self.plan = []
+        self.locked = None
 
     # ------------------------------------------------------------------ plan
     def _build_plan(self):
         g = self.get_parameter
-        x, y, z = self.target
+        x, y, z = self.locked if self.locked is not None else self.target
         bearing = math.atan2(y, x)
         rad = math.hypot(x, y)
 
@@ -392,8 +469,16 @@ class Executor(Node):
         atk = math.radians(float(g("attack_deg").value))
         curl = math.radians(float(g("curl_deg").value))
 
-        dump_b = bearing + math.radians(float(g("dump_bearing").value))
-        dump_r = float(g("dump_radius").value)
+        if self.dump_point is not None:
+            dx, dy = self.dump_point
+            dump_b = math.atan2(dy, dx)
+        else:
+            dump_deg = float(g("dump_bearing").value)
+            dump_b = (bearing + math.radians(dump_deg)
+                      if bool(g("dump_relative").value)
+                      else math.radians(dump_deg))
+        dump_r = (math.hypot(*self.dump_point) if self.dump_point is not None
+                  else float(g("dump_radius").value))
         dump_z = float(g("dump_height").value)
         rad = min(max(rad, REACH_IN), REACH_OUT)
         x, y = rad * math.cos(bearing), rad * math.sin(bearing)
@@ -406,16 +491,40 @@ class Executor(Node):
 
         # Lift while swinging outward, as a real machine does: high and close
         # is the one thing this arm cannot do.
+        #
+        # WRAP THE DIG->DUMP ANGLE. Without it, a dig at -153 deg and a dump at
+        # +90 deg give a difference of +243 deg, so the halfway lift point sits
+        # 121 deg the wrong way and the machine swings the long way round -
+        # which looked like it wandering off to the left mid-cycle. Wrapped,
+        # the same pair is -117 deg and it turns the short way.
+        swing = wrap(dump_b - bearing)
         r_lift = min(max(0.5 * (r_end + dump_r), REACH_IN), REACH_OUT)
-        b_lift = bearing + 0.5 * (dump_b - bearing)
+        b_lift = bearing + 0.5 * swing
+        dump_b = bearing + swing
+
+        # THE DRAG IS THE DIG. A real cycle pulls the stick in while curling
+        # the bucket progressively, and the path arcs upward as the bucket
+        # fills - it does not scrape along at one depth with a fixed wrist.
+        # Three sub-waypoints give that shape: deepest at the start, rising and
+        # curling through the pull.
+        def along(frac, lift_frac, curl_frac):
+            r = rad + (r_end - rad) * frac
+            return ((r * math.cos(bearing), r * math.sin(bearing),
+                     z + 0.18 * lift_frac),
+                    atk + (curl - atk) * curl_frac)
+
+        p1, b1 = along(0.35, 0.0, 0.25)
+        p2, b2 = along(0.70, 0.35, 0.55)
+        p3, b3 = along(1.00, 1.00, 0.80)
 
         legs = [
             ("approach",  (x, y, z + app), atk, z + 0.1),
             ("penetrate", (x, y, z), atk, z),
-            ("drag",      (r_end * math.cos(bearing),
-                           r_end * math.sin(bearing), z), atk, z),
+            ("drag 1/3",  p1, b1, z),
+            ("drag 2/3",  p2, b2, z),
+            ("drag 3/3",  p3, b3, z),
             ("curl",      (r_end * math.cos(bearing),
-                           r_end * math.sin(bearing), z + 0.15), curl, z),
+                           r_end * math.sin(bearing), z + 0.35), curl, z),
             ("lift",      (r_lift * math.cos(b_lift),
                            r_lift * math.sin(b_lift), lift), curl, z + 0.3),
             ("slew",      (dump_r * math.cos(dump_b),
@@ -449,11 +558,42 @@ class Executor(Node):
         self.leg = 0
         self.t_leg = 0.0
         self.q_from = np.array(self.measured)
+        self._publish_markers(x, y, z,
+                              dump_r * math.cos(dump_b),
+                              dump_r * math.sin(dump_b), dump_z)
         # remember the swath for this cycle, announced once the drag finishes
         self.cut = [x, y,
                     r_end * math.cos(bearing), r_end * math.sin(bearing),
                     z, float(g("cut_half_width").value)]
         return True
+
+    def _publish_markers(self, dx, dy, dz, ux, uy, uz):
+        arr = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+
+        def mk(i, x, y, z, r, g, b, scale, text=None):
+            m = Marker()
+            m.header.stamp = stamp
+            m.header.frame_id = "base_link"
+            m.ns = "excavation"
+            m.id = i
+            m.type = Marker.TEXT_VIEW_FACING if text else Marker.SPHERE
+            m.action = Marker.ADD
+            m.pose.position.x = float(x)
+            m.pose.position.y = float(y)
+            m.pose.position.z = float(z)
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = scale
+            m.color.r, m.color.g, m.color.b, m.color.a = r, g, b, 0.9
+            if text:
+                m.text = text
+            return m
+
+        arr.markers.append(mk(0, dx, dy, dz, 1.0, 0.4, 0.2, 0.45))
+        arr.markers.append(mk(1, dx, dy, dz + 0.8, 1.0, 1.0, 1.0, 0.35, "DIG"))
+        arr.markers.append(mk(2, ux, uy, uz, 0.2, 0.7, 1.0, 0.45))
+        arr.markers.append(mk(3, ux, uy, uz + 0.8, 1.0, 1.0, 1.0, 0.35, "DUMP"))
+        self.pub_marks.publish(arr)
 
     # ------------------------------------------------------------------ loop
     def _leg_duration(self, a, b):
@@ -472,6 +612,32 @@ class Executor(Node):
         dur = self._leg_duration(self.q_from, q_to)
         self.t_leg += self.dt
         a = min(self.t_leg / dur, 1.0)
+
+        # WAIT FOR THE ARM TO ARRIVE, do not just run out the clock.
+        #
+        # Open-loop timing assumes the joints track the command. Measured here
+        # they do not: the drives saturate near 4000 N.m and the slew manages
+        # about 0.14 rad/s against a commanded 0.35, so each leg was abandoned
+        # 2-3 m short and the next began from wherever the arm had got to. The
+        # cycle then bears no resemblance to the plan.
+        #
+        # Holding the final target until the joints are actually within
+        # tolerance makes the cycle correct at any drive strength - it simply
+        # takes longer on a weak one. The timeout stops a jammed joint from
+        # stalling the run forever.
+        if a >= 1.0 and self.measured is not None:
+            err = float(np.max(np.abs(np.array(q_to) - self.measured)))
+            self.t_hold += self.dt
+            if err > self.arrive_tol and self.t_hold < self.arrive_timeout:
+                m = Float64MultiArray()
+                m.data = [float(v) for v in q_to]
+                self.pub.publish(m)
+                return
+            if err > self.arrive_tol:
+                self.get_logger().warn(
+                    "%s: gave up waiting, still %.1f deg out after %.1f s - "
+                    "the joint drives cannot follow"
+                    % (label, math.degrees(err), self.t_hold))
         # cosine ease so the machine is not jerked at each waypoint
         s_a = 0.5 - 0.5 * math.cos(math.pi * a)
         q = self.q_from + (q_to - self.q_from) * s_a
@@ -482,20 +648,47 @@ class Executor(Node):
         self.pub.publish(m)
 
         if a >= 1.0:
+            self.t_hold = 0.0
+            # TRACKING CHECK. Commanded tip vs where the arm actually is. If the
+            # error is large the machine is not following the plan - the cycle
+            # then plays out from wherever the joints happen to have reached,
+            # which looks like the motion being wrong when the planning is fine.
+            if self.measured is not None:
+                want = fk(q_to)
+                got = fk(self.measured)
+                err = float(np.linalg.norm(want - got))
+                jerr = np.degrees(np.abs(np.array(q_to) - self.measured))
+                self.get_logger().info(
+                    "%-10s done: tip wanted (%6.2f,%6.2f,%6.2f) got "
+                    "(%6.2f,%6.2f,%6.2f)  err %.3f m  joints off %s deg"
+                    % (label, want[0], want[1], want[2], got[0], got[1], got[2],
+                       err, np.round(jerr, 1)))
+                if err > 0.30:
+                    self.get_logger().warn(
+                        "   %s: arm is %.2f m behind - it cannot keep up with "
+                        "joint_speed=%.2f rad/s" % (label, err, self.speed))
+
             # the drag is the leg that actually removes material
-            if label == "drag" and self.cut is not None:
+            if label == "drag 3/3" and self.cut is not None:
                 m2 = Float64MultiArray()
                 m2.data = [float(v) for v in self.cut]
                 self.pub_cut.publish(m2)
 
-            self.q_from = np.array(q_to)
+            # carry on from where the arm actually is, not where it was told
+            self.q_from = (np.array(self.measured) if self.measured is not None
+                           else np.array(q_to))
             self.leg += 1
             self.t_leg = 0.0
             if self.leg >= len(self.plan):
                 self.cycles += 1
-                self.get_logger().info("cycle %d complete" % self.cycles)
+                self.get_logger().info(
+                    "cycle %d complete at (%.2f, %.2f)"
+                    % (self.cycles, self.locked[0], self.locked[1]))
                 self.leg = 0
-                if self.target is None or not self._build_plan():
+                if bool(self.get_parameter("relatch").value):
+                    if self.target is not None:
+                        self.locked = tuple(self.target)
+                if self.locked is None or not self._build_plan():
                     self._halt("no further reachable target")
             else:
                 self.get_logger().info("leg -> %s" % self.plan[self.leg][0])

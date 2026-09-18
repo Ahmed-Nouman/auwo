@@ -79,6 +79,7 @@ class JoyTeleop(Node):
         p("limits_lower", [-12.566, -1.400, -2.428, -2.000])
         p("limits_upper", [12.566, 0.200, 0.200, 2.000])
         p("resync_rad", 0.35)   # re-seed only if the target has drifted this far
+        p("lead_rad", 0.25)     # how far the target may run ahead of the arm
 
         g = self.get_parameter
         self.deadman = int(g("deadman_button").value)
@@ -88,6 +89,7 @@ class JoyTeleop(Node):
         self.lo = [float(v) for v in g("limits_lower").value]
         self.hi = [float(v) for v in g("limits_upper").value]
         self.resync = float(g("resync_rad").value)
+        self.lead = float(g("lead_rad").value)
 
         pat = g("pattern").value
         self.map = PATTERNS.get(pat, PATTERNS["iso"])
@@ -173,6 +175,25 @@ class JoyTeleop(Node):
             v = self._axis(axis) * sign * self.rates[j] * scale
             self.target[j] += v * self.dt
             self.target[j] = max(self.lo[j], min(self.hi[j], self.target[j]))
+
+        # LEASH THE TARGET TO THE ARM.
+        #
+        # This integrates in wall time, but the simulator does not run at real
+        # time - at 28 Hz of /joint_states against 60 Hz nominal it is about
+        # half speed. Without a leash the target races away from the joint:
+        # hold a key for ten seconds and the command has moved 4 rad while the
+        # arm managed 1.5. The joint then crawls toward a point far ahead, the
+        # key feels dead, and if the target reaches a joint limit that axis
+        # stops responding entirely.
+        #
+        # Clamping the target to within `lead_rad` of the measured position
+        # makes the command track whatever the sim can actually deliver, at any
+        # sim speed, and releasing the key stops the arm at once.
+        if self.measured is not None:
+            for j in range(4):
+                lo = self.measured[j] - self.lead
+                hi = self.measured[j] + self.lead
+                self.target[j] = max(lo, min(hi, self.target[j]))
 
         out = Float64MultiArray()
         out.data = self.target

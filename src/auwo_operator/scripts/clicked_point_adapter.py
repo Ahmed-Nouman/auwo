@@ -52,8 +52,8 @@ import tf2_ros
 from rclpy.duration import Duration
 from rclpy.time import Time
 
-from geometry_msgs.msg import Point, Point32, PointStamped, PolygonStamped
-from std_msgs.msg import ColorRGBA, Float32
+from geometry_msgs.msg import (Point, Point32, PointStamped, PolygonStamped)
+from std_msgs.msg import ColorRGBA, Float32, String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -105,6 +105,13 @@ class ClickedPointAdapter(Node):
         # Depth over a topic so the dashboard can set it before closing a
         # region, without reaching for a parameter dialog.
         self.create_subscription(Float32, "/auwo/set_depth", self._on_depth, 10)
+        # One click tool, two jobs. Publish "dump" here and the next click
+        # places the dump point instead of a region corner, then it reverts.
+        self.click_mode = "region"
+        self.pub_dump = self.create_publisher(
+            PointStamped, "/auwo/dump_point", LATCHED)
+        self.create_subscription(String, "/auwo/click_mode",
+                                 self._on_click_mode, 10)
         self.create_service(Trigger, "/auwo/clear_region", self._srv_clear)
         self.create_service(Trigger, "/auwo/finish_region", self._srv_finish)
 
@@ -131,11 +138,30 @@ class ClickedPointAdapter(Node):
         # adequate here; the map itself is built with full rotations
         return msg.point.x + t.x, msg.point.y + t.y
 
+    def _on_click_mode(self, msg):
+        m = msg.data.strip().lower()
+        if m in ("region", "dump"):
+            self.click_mode = m
+            self.get_logger().info("next click sets the %s" % m)
+        else:
+            self.get_logger().warn("click mode must be 'region' or 'dump'")
+
     def _on_click(self, msg):
         xy = self._to_fixed(msg)
         if xy is None:
             return
         x, y = xy
+
+        if self.click_mode == "dump":
+            out = PointStamped()
+            out.header.stamp = self.get_clock().now().to_msg()
+            out.header.frame_id = self.frame
+            out.point.x, out.point.y, out.point.z = float(x), float(y), 0.0
+            self.pub_dump.publish(out)
+            self.get_logger().info("dump point (%.2f, %.2f) r=%.2f m"
+                                   % (x, y, math.hypot(x, y)))
+            self.click_mode = "region"
+            return
 
         if self.closed:
             self.get_logger().info("region was closed - starting a new one")

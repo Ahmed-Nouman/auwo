@@ -88,6 +88,7 @@ def build(context, *args, **kwargs):
     do_rviz = _flag(context, "rviz")
     do_joy = _flag(context, "joy")
     do_foxglove = _flag(context, "foxglove")
+    do_dig = _flag(context, "dig")
 
     cfg_path = _first_existing(
         os.path.join(bringup, "config", "sensors", cfg_name + ".yaml"),
@@ -114,6 +115,7 @@ def build(context, *args, **kwargs):
     print("  survey map   %s" % (os.path.join(MAP_DIR, run_name + ".pcd")
                                  if do_survey else "off"))
     print("  dig region   %s" % ("on" if do_operator else "off"))
+    print("  dig planner  %s" % ("planner + executor" if do_dig else "off"))
     if do_foxglove:
         print("  foxglove     ws://localhost:8765")
     if do_teleop and not do_joy:
@@ -211,6 +213,18 @@ def build(context, *args, **kwargs):
             name="clicked_point_adapter", output="screen",
             parameters=[{"fixed_frame": "base_link"}]))
 
+    # ------------------------------------------------------------ excavation
+    # Mode M2: the planner picks where to dig inside the operator's region and
+    # the executor runs the cycle there. No sim time on these - the executor
+    # runs a wall-clock loop for the same reason the arbiter does.
+    if do_dig:
+        nodes.append(Node(
+            package="auwo_task", executable="dig_planner.py",
+            name="dig_planner", output="screen"))
+        nodes.append(Node(
+            package="auwo_task", executable="excavation_executor.py",
+            name="excavation_executor", output="screen"))
+
     # -------------------------------------------------------------- foxglove
     # The dashboard connects over websocket, so it needs nothing installed and
     # can run on another machine. foxglove_bridge rather than rosbridge: the
@@ -262,5 +276,7 @@ def generate_launch_description():
         a("joy", default_value="false", description="start joy_node for a gamepad"),
         a("foxglove", default_value="true",
           description="foxglove_bridge websocket on port 8765"),
+        a("dig", default_value="true",
+          description="dig planner + excavation executor (mode M2)"),
         OpaqueFunction(function=build),
     ])
