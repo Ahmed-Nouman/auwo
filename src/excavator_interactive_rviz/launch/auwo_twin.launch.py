@@ -1,19 +1,57 @@
+"""AUWO digital twin.
+
+  use_gazebo:=false (default) RViz only, ros2_control on mock hardware — for use with
+                              Isaac Sim (Isaac subscribes to /joint_states) or on its own
+  use_gazebo:=true            Gazebo + gz_ros2_control + RViz
+
+Both modes publish /joint_states and accept the same commands, so the interactive
+markers, twin router and trajectory adapter work identically.
+"""
 import os
+import tempfile
+
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     OpaqueFunction,
+    RegisterEventHandler,
     TimerAction,
 )
+from launch.event_handlers import OnProcessExit
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 
-from excavator_models import default_model, load_profile
+from excavator_models import (
+    apply_sim_patches,
+    default_model,
+    load_profile,
+    process_xacro,
+    resolve_package_uris,
+)
+
+
+def _write_urdf(profile):
+    """URDF of the selected model for RViz / robot_state_publisher (no Gazebo).
+
+    Mock-hardware ros2_control, the model's simulation patches, and file:// mesh
+    paths for v2 (same treatment gazebo.launch.py gives its RViz URDF).
+    """
+    urdf = process_xacro(profile, {"use_mock_hardware": "true", "use_sim": "false"})
+    urdf = resolve_package_uris(apply_sim_patches(urdf, profile), profile, scheme="file")
+    path = os.path.join(tempfile.gettempdir(),
+                        f"excavator_{profile['model']}_standalone.urdf")
+    with open(path, "w") as f:
+        f.write(urdf)
+    return path, urdf
 
 
 def _setup(context, *args, **kwargs):
@@ -24,6 +62,9 @@ def _setup(context, *args, **kwargs):
 
     use_excavation_site = LaunchConfiguration("use_excavation_site")
     world_cfg = LaunchConfiguration("world")
+    # Gazebo on/off decides sim time and which startup delays are needed
+    use_gazebo = str(context.launch_configurations.get("use_gazebo", "false")).lower() in ("true", "1")
+    sim_time = use_gazebo
 
     # -------------------------------------------------------------------------
     # Gazebo: excavation site (world + dump truck)
@@ -53,12 +94,12 @@ def _setup(context, *args, **kwargs):
             # gazebo.launch.py applies the model's sim patches (v1: zeroes the
             # base_to_base_link 180° yaw), so RViz and Gazebo agree.
             "spawn_Y": "0.0",
-            "spawn_dumper": "true",
-            # dumper_x/y/z/yaw: taken from the excavator model profile (scene section)
             "excavator_model": model,
             "controller_spawn_delay_sec": "25.0"  # FIX: was 12.0 — /controller_manager needs more time after plugin loads,  # FIX 3: forwarded explicitly
         }.items(),
-        condition=IfCondition(use_excavation_site),
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration("use_gazebo"), "'.lower() in ('true','1') and '",
+             use_excavation_site, "'.lower() in ('true','1')"])),
     )
 
     # --- Gazebo: default empty world (no truck) ---
@@ -75,7 +116,9 @@ def _setup(context, *args, **kwargs):
             "excavator_model": model,
             "controller_spawn_delay_sec": "25.0"  # FIX: was 12.0 — /controller_manager needs more time after plugin loads,  # FIX 3
         }.items(),
-        condition=UnlessCondition(use_excavation_site),
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration("use_gazebo"), "'.lower() in ('true','1') and '",
+             use_excavation_site, "'.lower() not in ('true','1')"])),
     )
 
     # -------------------------------------------------------------------------
@@ -93,7 +136,12 @@ def _setup(context, *args, **kwargs):
         arguments=["-d", rviz_config],
         output="screen",
     )
-    rviz_delayed = TimerAction(period=30.0, actions=[rviz])  # FIX: was 4.0s
+    # Gazebo needs ~25 s before controllers are up; mock hardware is ready in a few seconds.
+    t_controllers = 5.0 if not use_gazebo else None
+    t_adapter = 28.0 if use_gazebo else 8.0
+    t_interactive = 32.0 if use_gazebo else 10.0
+    t_rviz = 30.0 if use_gazebo else 6.0
+    rviz_delayed = TimerAction(period=t_rviz, actions=[rviz])
 
     # NOTE: Gazebo auto-pause removed.
     # Pausing Gazebo during startup causes a deadlock: the controller_manager
@@ -115,9 +163,9 @@ def _setup(context, *args, **kwargs):
         executable="joint_imarkers.py",
         name="excavator_joint_imarkers",
         output="screen",
-        parameters=[{"use_sim_time": True, "excavator_model": model}],
+        parameters=[{"use_sim_time": sim_time, "excavator_model": model}],
     )
-    joint_imarkers_delayed = TimerAction(period=32.0, actions=[joint_imarkers])
+    joint_imarkers_delayed = TimerAction(period=t_interactive, actions=[joint_imarkers])
 
     # -------------------------------------------------------------------------
     # Twin router
@@ -138,7 +186,7 @@ def _setup(context, *args, **kwargs):
         name="excavator_twin_router",
         output="screen",
         parameters=[
-            {"use_sim_time": True},
+            {"use_sim_time": sim_time},
             {"excavator_model": model},
             {"default_mode": "simulation"},
             # This must match trajectory_command_adapter.py's subscribed input topic.
@@ -150,7 +198,7 @@ def _setup(context, *args, **kwargs):
             {"physical_state_topic": "/physical_twin/state"},
         ],
     )
-    twin_router_delayed = TimerAction(period=32.0, actions=[twin_router_node])
+    twin_router_delayed = TimerAction(period=t_interactive, actions=[twin_router_node])
 
     # -------------------------------------------------------------------------
     # Trajectory adapter
@@ -162,9 +210,9 @@ def _setup(context, *args, **kwargs):
         executable="trajectory_command_adapter.py",
         name="trajectory_command_adapter",
         output="screen",
-        parameters=[{"use_sim_time": True, "excavator_model": model}],
+        parameters=[{"use_sim_time": sim_time, "excavator_model": model}],
     )
-    trajectory_adapter_delayed = TimerAction(period=28.0, actions=[trajectory_adapter])
+    trajectory_adapter_delayed = TimerAction(period=t_adapter, actions=[trajectory_adapter])
 
     # -------------------------------------------------------------------------
     # IMU -> Pose for RViz
@@ -181,7 +229,7 @@ def _setup(context, *args, **kwargs):
         name="imu_to_pose",
         output="screen",
         parameters=[
-            {"use_sim_time": True},
+            {"use_sim_time": sim_time},
             {"pose_frame_id": "world"},
             {"position_x": 0.5},
             {"position_y": 0.0},
@@ -199,21 +247,114 @@ def _setup(context, *args, **kwargs):
         name="points_frame_remap",
         output="screen",
         parameters=[
-            {"use_sim_time": True},
+            {"use_sim_time": sim_time},
             {"target_frame_id": "sensor_lidar_link"},
             {"input_topic": "/points"},
             {"output_topic": "/points_viz"},
         ],
     )
 
+    # -------------------------------------------------------------------------
+    # No Gazebo (use_gazebo:=false): ros2_control on mock hardware.
+    #
+    # Gives the same /joint_states and the same command topics as the Gazebo run,
+    # so Isaac Sim (subscribing to /joint_states) follows the markers, the twin
+    # router or MoveIt without Gazebo running. The Gazebo-only sensor relays
+    # (imu_to_pose, points_frame_remap) are skipped: /imu and /points do not exist.
+    # -------------------------------------------------------------------------
+    standalone = []
+    if not use_gazebo:
+        urdf_path, urdf_xml = _write_urdf(profile)
+
+        standalone.append(Node(
+            package="robot_state_publisher",
+            executable="robot_state_publisher",
+            name="robot_state_publisher",
+            output="screen",
+            parameters=[{
+                "robot_description": urdf_xml,
+                "use_sim_time": False,
+                "publish_frequency": 50.0,
+            }],
+        ))
+
+        # RViz reads /excavator_robot_description (and /truck_robot_description)
+        standalone.append(Node(
+            package="excavator_gazebo",
+            executable="publish_robot_descriptions.py",
+            name="publish_robot_descriptions",
+            output="screen",
+            parameters=[{"excavator_description_file": urdf_path}],
+        ))
+
+        # world -> base_link, same frame layout as the Gazebo run
+        standalone.append(Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="excavator_world_tf",
+            arguments=[
+                "--x", "0.0", "--y", "0.0", "--z", "0.0",
+                "--roll", "0.0", "--pitch", "0.0", "--yaw", "0.0",
+                "--frame-id", "world", "--child-frame-id", "base_link",
+            ],
+            parameters=[{"use_sim_time": False}],
+        ))
+
+        controllers_yaml = profile["controllers_path"]
+        standalone.append(Node(
+            package="controller_manager",
+            executable="ros2_control_node",
+            name="controller_manager",
+            output="both",
+            parameters=[controllers_yaml, {"use_sim_time": False}],
+            remappings=[("~/robot_description", "/robot_description")],
+        ))
+
+        def _spawner(controller):
+            return Node(
+                package="controller_manager",
+                executable="spawner",
+                name=f"spawner_{controller}",
+                output="screen",
+                arguments=[controller, "--controller-manager", "/controller_manager",
+                           "--param-file", controllers_yaml],
+                parameters=[{"use_sim_time": False}],
+            )
+
+        # Chain the spawners (jsb -> arm -> model extras): parallel spawners race
+        # the controller_manager, same as in gazebo.launch.py.
+        chain = [_spawner("joint_state_broadcaster"), _spawner("arm_trajectory_controller")]
+        chain += [_spawner(c) for c in profile["extra_controllers"]]
+        chain_handlers = [
+            RegisterEventHandler(OnProcessExit(target_action=a, on_exit=[b]))
+            for a, b in zip(chain[:-1], chain[1:])
+        ]
+        standalone.append(TimerAction(period=t_controllers,
+                                      actions=[chain[0], *chain_handlers]))
+
+        if profile["linkage"].get("enabled"):
+            # v2: hydraulic cylinders + bucket linkage follow the arm joints
+            standalone.append(TimerAction(period=t_controllers, actions=[Node(
+                package="excavator_models",
+                executable="linkage_state_publisher",
+                name="linkage_state_publisher",
+                output="screen",
+                parameters=[{
+                    "excavator_model": model,
+                    "mode": "controller",
+                    "use_sim_time": False,
+                }],
+            )]))
+
     return [
-        # Gazebo worlds (conditional)
+        # Gazebo worlds (conditional, and only when use_gazebo:=true)
         gazebo_excavation,
         gazebo_default,
-        # Sensor relay nodes (stateless — start early, no dependency on controllers)
-        imu_to_pose,
-        points_frame_remap,
-        # Trajectory adapter needs active arm_trajectory_controller
+        # Gazebo sensor relays (stateless — start early, no dependency on controllers)
+        *([imu_to_pose, points_frame_remap] if use_gazebo else []),
+        # ros2_control on mock hardware when Gazebo is off
+        *standalone,
+        # Trajectory adapter needs an active arm_trajectory_controller
         trajectory_adapter_delayed,
         # RViz — after controllers + TF tree are stable
         rviz_delayed,
@@ -234,6 +375,14 @@ def generate_launch_description():
                 description=(
                     "Excavator model: v1 (excavator_description) or v2 "
                     "(excavator_v2_description). Default: $AUWO_EXCAVATOR_MODEL or v2."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "use_gazebo",
+                default_value="false",
+                description=(
+                    "false (default): RViz + ros2_control on mock hardware, e.g. when the "
+                    "physics runs in Isaac Sim. true: run Gazebo."
                 ),
             ),
             DeclareLaunchArgument(

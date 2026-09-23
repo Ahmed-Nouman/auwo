@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Gazebo Harmonic launcher for the AUWO excavator (ROS 2 Jazzy).
+# The excavator is the only model spawned (no dump truck, no pete_environment).
 # excavator_model:=v1 (excavator_description) or v2 (excavator_v2_description).
 import os
 import shutil
@@ -156,82 +157,15 @@ def _excavator_urdf_files(profile, model_override: str = '') -> tuple[str, str]:
     return rviz_path, gz_path
 
 
-def _truck_rviz_file(truck_pkg_share: str) -> str:
-    """Truck URDF for RViz (STL visual, package:// kept)."""
-    out_truck = os.path.join(tempfile.gettempdir(), 'truck_rviz.urdf')
-    truck_xacro = os.path.join(truck_pkg_share, 'urdf', 'truck.urdf.xacro')
-    minimal = ('<?xml version="1.0"?><robot name="truck"><link name="base_link"><visual>'
-               '<geometry><box size="0.1 0.1 0.1"/></geometry></visual></link></robot>')
-    if os.path.isfile(truck_xacro):
-        result = subprocess.run(
-            ['xacro', truck_xacro, 'pete_visual_ext:=stl', 'pete_visual_rpy:=0 0 0', '-o', out_truck],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            with open(out_truck, 'w') as f:
-                f.write(minimal)
-    else:
-        with open(out_truck, 'w') as f:
-            f.write(minimal)
-    return out_truck
-
-
-def _generate_truck_urdf(truck_pkg_share: str) -> tuple[str, str]:
-    """Run xacro on truck.urdf.xacro; return (path_to_urdf_file, urdf_content)."""
-    xacro_path = os.path.join(truck_pkg_share, 'urdf', 'truck.urdf.xacro')
-    if not os.path.isfile(xacro_path):
-        raise FileNotFoundError(f"Truck xacro not found: {xacro_path}")
-    out_path = os.path.join(tempfile.gettempdir(), 'truck_excavation_site.urdf')
-    result = subprocess.run(
-        ['xacro', xacro_path, '-o', out_path],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"xacro failed: {result.stderr or result.stdout}")
-    with open(out_path, 'r') as f:
-        content = f.read()
-    # Resolve package:// so Gazebo finds meshes
-    pkg_share = os.path.dirname(os.path.dirname(xacro_path))  # .../share/truck_description
-    content = content.replace(
-        'package://truck_description/',
-        pkg_share.rstrip('/') + '/',
-    )
-    with open(out_path, 'w') as f:
-        f.write(content)
-    return out_path, content
-
-
 def _launch_setup(context, *args, **kwargs):
     """Everything that depends on the selected excavator model."""
     pkg_name = 'excavator_description'   # shared worlds / models / Gazebo model shim
     pkg_share = get_package_share_directory(pkg_name)
-    truck_pkg_share = get_package_share_directory('truck_description')
 
     cfg = context.launch_configurations
     profile = load_profile(cfg.get('excavator_model', ''))
-    scene = profile.get('scene', {})
-
-    def _scene(arg, key):
-        value = cfg.get(arg, '').strip()
-        return value if value else str(scene.get(key, 0.0))
-
-    dumper_x = _scene('dumper_x', 'dumper_x')
-    dumper_y = _scene('dumper_y', 'dumper_y')
-    dumper_z = _scene('dumper_z', 'dumper_z')
-    dumper_yaw = _scene('dumper_yaw', 'dumper_yaw')
 
     _register_local_model(pkg_share)
-
-    # Generate truck URDF once so spawn_dumper (spawn truck) can use it
-    try:
-        truck_urdf_path, truck_urdf_content = _generate_truck_urdf(truck_pkg_share)
-    except (FileNotFoundError, RuntimeError):
-        truck_urdf_path = None
-        truck_urdf_content = None
 
     # Excavator URDFs for RViz/RSP and for Gazebo (model-specific sim patches applied)
     excavator_urdf_path = None
@@ -241,7 +175,6 @@ def _launch_setup(context, *args, **kwargs):
             profile, cfg.get('model', '').strip())
     except Exception as e:  # noqa: BLE001 - keep launching, report clearly
         print(f'[excavator_gazebo] excavator URDF generation failed: {e}')
-    truck_rviz_path = _truck_rviz_file(truck_pkg_share)
     print(f'[excavator_gazebo] excavator model {profile["model"]} ({profile["package"]})')
 
     robot_name = LaunchConfiguration('robot_name')
@@ -252,7 +185,6 @@ def _launch_setup(context, *args, **kwargs):
     spawn_R = LaunchConfiguration('spawn_R')
     spawn_P = LaunchConfiguration('spawn_P')
     spawn_Y = LaunchConfiguration('spawn_Y')
-    spawn_dumper = LaunchConfiguration('spawn_dumper')
     controller_spawn_delay_sec = LaunchConfiguration('controller_spawn_delay_sec', default='25.0')
 
     # Resource paths for Gazebo (package://<description>/... needs the share parent)
@@ -310,7 +242,8 @@ def _launch_setup(context, *args, **kwargs):
     )
     spawn_Y_gz = spawn_Y
 
-    # Publish excavator and truck URDF to separate topics for RViz (paths as plain strings so they resolve reliably)
+    # Publish the excavator URDF on /excavator_robot_description for RViz (the node also
+    # publishes a minimal /truck_robot_description so the RViz truck display stays valid)
     desc_publisher = Node(
         package='excavator_gazebo',
         executable='publish_robot_descriptions.py',
@@ -318,7 +251,6 @@ def _launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'excavator_description_file': excavator_rviz_path,
-            'truck_description_file': truck_rviz_path,
         }],
     )
 
@@ -403,64 +335,6 @@ def _launch_setup(context, *args, **kwargs):
             }],
         ))
 
-    # ---- Dump truck (when spawn_dumper is true and truck URDF was generated) ----
-    truck_group_actions = []
-    if truck_urdf_path is not None and truck_urdf_content is not None:
-        truck_spawn = Node(
-            package='ros_gz_sim',
-            executable='create',
-            name='create_truck',
-            output='screen',
-            arguments=[
-                '-world', 'default',
-                '-file', truck_urdf_path,
-                '-name', 'truck',
-                '-allow_renaming', 'true',
-                '-x', dumper_x, '-y', dumper_y, '-z', dumper_z,
-                '-R', '0', '-P', '0', '-Y', dumper_yaw,
-            ],
-            additional_env=_GZ_TRANSPORT_ENV,
-            condition=IfCondition(spawn_dumper),
-        )
-
-        # Stationary dumper: robot_state_publisher publishes the link tree (base_link -> dump_bed) for RViz
-        truck_rsp = Node(
-            package='robot_state_publisher',
-            executable='robot_state_publisher',
-            name='robot_state_publisher_truck',
-            output='screen',
-            # Do not publish to /truck_robot_description: RViz uses that topic from
-            # publish_robot_descriptions (STL). RSP only needs TF; GLB URDF stays off RViz path.
-            remappings=[
-                ('robot_description', '/truck_robot_description_internal'),
-                # Truck RSP must not publish/consume /joint_states (excavator topic).
-                ('joint_states', '/truck/joint_states'),
-            ],
-            parameters=[{
-                'robot_description': truck_urdf_content,
-                'use_sim_time': use_sim_time,
-                'frame_prefix': 'truck/',
-                'publish_frequency': 50.0,
-            }],
-            condition=IfCondition(spawn_dumper),
-        )
-
-        # World -> truck/base_link at spawn pose so truck is positioned in RViz (use_sim_time so TF matches /clock)
-        truck_static_tf = Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='truck_world_tf',
-            arguments=[
-                '--x', dumper_x, '--y', dumper_y, '--z', dumper_z,
-                '--yaw', dumper_yaw,
-                '--frame-id', 'world', '--child-frame-id', 'truck/base_link',
-            ],
-            parameters=[{'use_sim_time': use_sim_time}],
-            condition=IfCondition(spawn_dumper),
-        )
-
-        truck_group_actions = [truck_spawn, truck_rsp, truck_static_tf]
-
     actions = [
         set_gz_resource_path,
         rsp,
@@ -470,10 +344,6 @@ def _launch_setup(context, *args, **kwargs):
         spawn_after_gz,
         *model_actions,
     ]
-    if truck_group_actions:
-        truck_group = GroupAction(condition=IfCondition(spawn_dumper), actions=truck_group_actions)
-        # Delay truck-related spawn/actions so the excavator spawn is deterministic first.
-        actions.append(TimerAction(period=6.0, actions=[truck_group]))
     return actions
 
 
@@ -541,20 +411,14 @@ def generate_launch_description():
     spawn_P_arg = DeclareLaunchArgument('spawn_P', default_value='0.0')
     spawn_Y_arg = DeclareLaunchArgument('spawn_Y', default_value='0.0')
 
+    # The dump truck is no longer spawned. These arguments are kept so existing
+    # launch files and scripts that still pass them keep working; they do nothing.
     spawn_dumper_arg = DeclareLaunchArgument(
-        'spawn_dumper',
-        default_value='false',
-        description='Spawn dump truck model (truck.urdf.xacro) for excavation scenario',
-    )
-    # Truck pose: empty = take it from the excavator model profile (scene section)
-    dumper_x_arg = DeclareLaunchArgument('dumper_x', default_value='',
-                                         description='Truck x (empty: from model profile)')
-    dumper_y_arg = DeclareLaunchArgument('dumper_y', default_value='',
-                                         description='Truck y (empty: from model profile)')
-    dumper_z_arg = DeclareLaunchArgument('dumper_z', default_value='',
-                                         description='Truck z (empty: from model profile)')
-    dumper_yaw_arg = DeclareLaunchArgument('dumper_yaw', default_value='',
-                                           description='Truck yaw (empty: from model profile)')
+        'spawn_dumper', default_value='false', description='Deprecated: no truck is spawned.')
+    dumper_x_arg = DeclareLaunchArgument('dumper_x', default_value='', description='Deprecated.')
+    dumper_y_arg = DeclareLaunchArgument('dumper_y', default_value='', description='Deprecated.')
+    dumper_z_arg = DeclareLaunchArgument('dumper_z', default_value='', description='Deprecated.')
+    dumper_yaw_arg = DeclareLaunchArgument('dumper_yaw', default_value='', description='Deprecated.')
 
     controller_spawn_delay_sec_arg = DeclareLaunchArgument(
         'controller_spawn_delay_sec',
@@ -675,7 +539,7 @@ def generate_launch_description():
         controller_spawn_delay_sec_arg,
         set_gz_partition,
         set_gz_plugin_path,
-        # Model-dependent: resource path, RSP, TF, description topics, spawn, controllers, truck
+        # Model-dependent: resource path, RSP, TF, description topics, spawn, controllers
         OpaqueFunction(function=_launch_setup),
         gz_unified_group,
         gz_split_group,
