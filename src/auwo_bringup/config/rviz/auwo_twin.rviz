@@ -1,0 +1,133 @@
+# RViz view for the Isaac Sim twin (auwo_bringup/launch/isaac_twin.launch.py).
+# RobotModel uses Transient Local durability: robot_state_publisher latches
+# /robot_description, so a Volatile subscription never receives it.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 100; 100; 100
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description File: ""
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+      Collision Enabled: false
+      Alpha: 1
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Marker Scale: 0.5
+      Show Names: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Survey map (/map_cloud)
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map_cloud
+      Style: Flat Squares
+      Size (m): 0.05
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar_fl (front_corners)
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /lidar_fl/points
+      Style: Flat Squares
+      Size (m): 0.02
+      Color: 0; 200; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar_fr (front_corners)
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /lidar_fr/points
+      Style: Flat Squares
+      Size (m): 0.02
+      Color: 255; 170; 0
+      Color Transformer: FlatColor
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar_cab (cab_only)
+      Enabled: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /lidar_cab/points
+      Style: Flat Squares
+      Size (m): 0.02
+      Color Transformer: Intensity
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar_boom (boom configs)
+      Enabled: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /lidar_boom/points
+      Style: Flat Squares
+      Size (m): 0.02
+      Color Transformer: Intensity
+      Decay Time: 0
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Name: Joint markers
+      Enabled: true
+      Interactive Markers Namespace: /excavator_joint_imarkers
+      Show Axes: false
+      Show Descriptions: true
+  Global Options:
+    Fixed Frame: base_link
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+  Enabled: true
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 12
+      Focal Point:
+        X: 1
+        Y: 0
+        Z: 1
+      Pitch: 0.4
+      Yaw: 3.9
+      Name: Current View
+      Target Frame: base_link

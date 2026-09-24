@@ -185,6 +185,12 @@ def build(context, *args, **kwargs):
         os.path.join(get_package_share_directory("excavator_interactive_rviz"),
                      "rviz", "auwo_twin.rviz"),
     )
+    if rviz_cfg is None:
+        # without -d RViz silently falls back to ~/.rviz2/default.rviz, whose
+        # RobotModel is usually Volatile and so never gets the latched
+        # /robot_description - the "robot_description does not load" symptom.
+        print("[isaac_twin] WARNING: no auwo_twin.rviz found; RViz will use your "
+              "personal default config. Rebuild auwo_bringup to get the shipped one.")
     nodes.append(Node(
         package="rviz2", executable="rviz2", name="auwo_digital_twin_rviz",
         output="screen",
