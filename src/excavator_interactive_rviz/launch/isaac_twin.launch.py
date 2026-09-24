@@ -141,7 +141,7 @@ def build(context, *args, **kwargs):
     nodes.append(Node(
         package="excavator_interactive_rviz", executable="joint_imarkers.py",
         name="excavator_joint_imarkers", output="screen",
-        parameters=[use_sim_time],
+        parameters=[{"excavator_model": profile["model"], **use_sim_time}],
     ))
 
     if do_map:

@@ -160,7 +160,7 @@ def build(context, *args, **kwargs):
         package="excavator_interactive_rviz", executable="joint_imarkers.py",
         name="excavator_joint_imarkers", output="screen",
         remappings=[(MACHINE_CMD, "/auwo/cmd/markers")],
-        parameters=[use_sim_time],
+        parameters=[{"excavator_model": profile["model"], **use_sim_time}],
     ))
 
     # survey map: union-forever, for the sensor placement study [auwo_perception]
