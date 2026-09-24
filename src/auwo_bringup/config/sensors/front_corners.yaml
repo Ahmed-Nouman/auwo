@@ -1,0 +1,59 @@
+# AUWO sensor configuration: front_corners
+#
+# Two 16-beam lidars at the front left/right corners, mirroring the existing
+# stereo camera mounts (Realsense_left / Realsense_right).
+#
+# USD scene:  excavator_front_corners.usd
+#
+# Rationale: ALICE (Frese et al. 2022) used exactly this pair (plus a rear unit
+# and an under-boom one). The benefit is not just wider coverage - two sensors
+# separated laterally see AROUND the boom from both sides, so each one's arm
+# shadow is filled by the other. Parallax, not just redundancy.
+#
+# Both are parented to `sensor_imu_link` (a fixed child of `body` with rpy 0 0 0),
+# so both sweep with the cab slew and both have exactly known poses from the
+# body_rotation encoder.
+#
+# Mount height: sensor_imu_link sits 0.85 m above base_link, plus 1.5049 m
+# => 2.355 m above ground, essentially the same as lidar_cab. Hence 30 deg
+# tilt, matching the baseline - NOT the 15 deg that a roof-height mount
+# would need.
+#
+# The cameras carry an outward yaw in their orientation (they need it to cover
+# the flanks with a 78 deg FOV). These lidars see 360 deg natively, so no yaw
+# is applied - only tilt.
+
+name: front_corners
+description: >
+  Two 16-beam lidars at the front corners, matching the camera mounts.
+  Tests whether lateral separation fills the boom shadow in the dig zone
+  and roughly doubles point density in the overlap.
+
+usd_scene: excavator_front_corners.usd
+
+lidars:
+  - frame: lidar_fl
+    parent: sensor_imu_link
+    topic: /lidar_fl/points
+    sensor_profile: AUWO_Puck16
+    xyz: [0.263400, 0.394000, 1.504900]
+    quat_xyzw: [0.258819, 0.000000, 0.965926, 0.000000]
+    # documentation only - the quaternion above is authoritative
+    tilt_deg: 30.0
+    height_above_ground_m: 2.355
+    ground_coverage_m: [2.36, 8.79]
+
+  - frame: lidar_fr
+    parent: sensor_imu_link
+    topic: /lidar_fr/points
+    sensor_profile: AUWO_Puck16
+    xyz: [0.263400, -0.394000, 1.504900]
+    quat_xyzw: [0.258819, 0.000000, 0.965926, 0.000000]
+    tilt_deg: 30.0
+    height_above_ground_m: 2.355
+    ground_coverage_m: [2.36, 8.79]
+
+mapping:
+  min_range: 2.2
+  inflate: 0.15
+  voxel_size: 0.10

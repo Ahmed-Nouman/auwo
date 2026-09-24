@@ -2,6 +2,9 @@
 .roslog
 .cursor
 .vscode
+.cursor/
+.roslog/
+.vscode/
 
 # Ignore build, install, and log directories
 build/
