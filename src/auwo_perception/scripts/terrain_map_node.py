@@ -147,9 +147,9 @@ class TerrainMap(Node):
         p = self.declare_parameter
         p("input_topics", ["/lidar_boom/points"])
         p("fixed_frame", "base_link")
-        p("length_x", 24.0)
-        p("length_y", 24.0)
-        p("resolution", 0.15)
+        p("length_x", 60.0)
+        p("length_y", 60.0)
+        p("resolution", 0.25)
         p("min_range", 0.5)
         p("min_grazing_deg", 4.0)   # below this a return is discarded
         p("exclude_radius", 1.2)    # cylinder around the slew axis, see below
