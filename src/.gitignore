@@ -1,0 +1,16 @@
+# ROS2 workspace ignore rules
+
+# Ignore build, install, and log directories
+build/
+install/
+log/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore colcon/ament artifacts
+.colcon*
+*.egg-info/
+

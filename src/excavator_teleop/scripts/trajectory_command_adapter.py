@@ -15,6 +15,8 @@ from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
+from excavator_models import default_model, load_profile
+
 JOINT_ORDER = ["body_rotation", "boom_rotation", "stick_rotation", "bucket_rotation"]
 TRAJ_DURATION_S = 0.6  # time from current to target
 NUM_POINTS = 15       # waypoints for smooth interpolation
@@ -23,12 +25,14 @@ NUM_POINTS = 15       # waypoints for smooth interpolation
 class TrajectoryCommandAdapter(Node):
     def __init__(self):
         super().__init__("trajectory_command_adapter")
+        model = self.declare_parameter("excavator_model", default_model()).value
         self.declare_parameter("trajectory_duration", TRAJ_DURATION_S)
         self.declare_parameter("num_points", NUM_POINTS)
         self.duration_s = self.get_parameter("trajectory_duration").value
         self.num_points = self.get_parameter("num_points").value
 
-        self.current = [0.0, -0.5, -1.0, -1.0]  # default
+        # Start from the model's safe pose until /joint_states arrives (v1: [0, -0.5, -1, -1])
+        self.current = [float(v) for v in load_profile(model)["safe_pose"]]
         self.last_target = None
 
         self.sub_cmd = self.create_subscription(

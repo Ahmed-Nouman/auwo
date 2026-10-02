@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import math
 
 import rclpy
 from rclpy.node import Node
@@ -11,6 +10,8 @@ from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
+
+from excavator_models import default_model, load_profile
 
 
 class ExcavatorJointInteractive(Node):
@@ -30,6 +31,11 @@ class ExcavatorJointInteractive(Node):
     def __init__(self):
         super().__init__("excavator_joint_interactive")
 
+        # Excavator model (v1/v2): joint ranges come from its model profile
+        model = self.declare_parameter("excavator_model", default_model()).value
+        profile = load_profile(model)
+        lim = profile["ui_limits"]
+
         # Joint order must match controllers.yaml
         self.joint_order = [
             "body_rotation",
@@ -42,15 +48,15 @@ class ExcavatorJointInteractive(Node):
         self.joint_positions = {name: 0.0 for name in self.joint_order}
 
         # === CONFIG: joint limits + marker frames + marker range ===
-        # Limits from excavator.urdf.xacro
+        # Limits from the model profile (ui_limits; v1 values are the previous hard-coded ones)
         self.joint_configs = {
             "body_rotation": {
                 "frame_id": "body",          # link name in URDF
                 "marker_name": "body_control",
                 "description": "Body rotation",
-                # practical range for continuous joint
-                "joint_lower": -math.pi,
-                "joint_upper":  math.pi,
+                # practical range for the wide-range swing joint
+                "joint_lower": float(lim["body_rotation"][0]),
+                "joint_upper": float(lim["body_rotation"][1]),
                 "marker_min":  -0.7,
                 "marker_max":   0.7,
             },
@@ -58,8 +64,8 @@ class ExcavatorJointInteractive(Node):
                 "frame_id": "boom",
                 "marker_name": "boom_control",
                 "description": "Boom rotation",
-                "joint_lower": -1.308,
-                "joint_upper": -0.087,
+                "joint_lower": float(lim["boom_rotation"][0]),
+                "joint_upper": float(lim["boom_rotation"][1]),
                 "marker_min":  -0.5,
                 "marker_max":   0.5,
             },
@@ -67,8 +73,8 @@ class ExcavatorJointInteractive(Node):
                 "frame_id": "stick",
                 "marker_name": "stick_control",
                 "description": "Stick rotation",
-                "joint_lower": -2.428,
-                "joint_upper": -0.085,
+                "joint_lower": float(lim["stick_rotation"][0]),
+                "joint_upper": float(lim["stick_rotation"][1]),
                 "marker_min":  -0.5,
                 "marker_max":   0.5,
             },
@@ -76,8 +82,8 @@ class ExcavatorJointInteractive(Node):
                 "frame_id": "bucket",
                 "marker_name": "bucket_control",
                 "description": "Bucket rotation",
-                "joint_lower": -2.395,
-                "joint_upper": -0.357,
+                "joint_lower": float(lim["bucket_rotation"][0]),
+                "joint_upper": float(lim["bucket_rotation"][1]),
                 "marker_min":  -0.5,
                 "marker_max":   0.5,
             },
@@ -105,7 +111,8 @@ class ExcavatorJointInteractive(Node):
         # Create markers for all joints
         self.create_all_markers()
 
-        self.get_logger().info("Excavator joint interactive markers (linear) started.")
+        self.get_logger().info(
+            f"Excavator joint interactive markers (linear) started for model {profile['model']}.")
 
     # -------------------------------------------------------------------------
     # Callbacks

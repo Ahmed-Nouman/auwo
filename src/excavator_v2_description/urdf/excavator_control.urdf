@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!-- Actuated joints only: used by joint_state_publisher(_gui) for display/demo modes. -->
+<robot name="excavator_control">
+  <link name="base_link"/>
+  <link name="base"/>
+  <link name="body"/>
+  <link name="boom"/>
+  <link name="stick"/>
+  <link name="bucket"/>
+  <link name="blade"/>
+  <joint name="base_to_base_link" type="fixed"><parent link="base_link"/><child link="base"/></joint>
+  <joint name="body_rotation" type="revolute"><parent link="base"/><child link="body"/><axis xyz="0 0 1"/><limit lower="-12.566370614359172" upper="12.566370614359172" effort="1" velocity="1"/></joint>
+  <joint name="boom_rotation" type="revolute"><parent link="body"/><child link="boom"/><axis xyz="0 1 0"/><limit lower="-0.598" upper="1.037" effort="1" velocity="1"/></joint>
+  <joint name="stick_rotation" type="revolute"><parent link="boom"/><child link="stick"/><axis xyz="0 1 0"/><limit lower="-0.878" upper="1.047" effort="1" velocity="1"/></joint>
+  <joint name="bucket_rotation" type="revolute"><parent link="stick"/><child link="bucket"/><axis xyz="0 1 0"/><limit lower="-1.944" upper="1.29" effort="1" velocity="1"/></joint>
+  <joint name="blade_rotation" type="revolute"><parent link="base"/><child link="blade"/><axis xyz="0 1 0"/><limit lower="-0.349" upper="0.401" effort="1" velocity="1"/></joint>
+</robot>

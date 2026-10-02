@@ -4,10 +4,16 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Float64MultiArray
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
+
+from excavator_models import default_model, load_profile
 
 HELP = "Keys: a/d body, w/s boom, i/k stick, j/l bucket, SPACE safe pose, q quit"
+HELP_BLADE = "      u/o blade (models with a blade)"
 
-# --- Joint limits from your URDF ---
+# --- Joint limits: set from the excavator model profile in Teleop.__init__ ---
+# (v1 values: boom [-1.308, -0.087], stick [-2.428, -0.085], bucket [-2.395, -0.357])
 LIMS_MIN = [float('-inf'), -1.308, -2.428, -2.395]  # body is continuous
 LIMS_MAX = [float('inf'),  -0.087, -0.085, -0.357]
 SAFE_POSE = [0.0, -0.5, -1.0, -1.0]  # inside limits
@@ -15,9 +21,29 @@ SAFE_POSE = [0.0, -0.5, -1.0, -1.0]  # inside limits
 def clamp(q):
     return [max(LIMS_MIN[i], min(LIMS_MAX[i], q[i])) for i in range(4)]
 
+
+def _apply_profile(profile):
+    """Replace the module-level limits and safe pose with the model's values."""
+    global LIMS_MIN, LIMS_MAX, SAFE_POSE
+    lim = profile['ui_limits']
+    LIMS_MIN = [float('-inf')] + [float(lim[j][0]) for j in profile['arm_joints'][1:]]
+    LIMS_MAX = [float('inf')] + [float(lim[j][1]) for j in profile['arm_joints'][1:]]
+    SAFE_POSE = [float(v) for v in profile['safe_pose']]
+
 class Teleop(Node):
     def __init__(self):
         super().__init__('teleop_excavator')
+
+        # Excavator model (v1/v2) -> limits, safe pose, blade
+        model = self.declare_parameter('excavator_model', default_model()).value
+        profile = load_profile(model)
+        _apply_profile(profile)
+        blade_lim = profile.get('urdf_limits', {}).get('blade_rotation')
+        self.has_blade = 'blade_controller' in profile.get('extra_controllers', []) and blade_lim
+        self.blade_min, self.blade_max = (float(blade_lim[0]), float(blade_lim[1])) if self.has_blade else (0.0, 0.0)
+        self.blade = 0.0
+        self.blade_pub = self.create_publisher(
+            JointTrajectory, '/blade_controller/joint_trajectory', 10) if self.has_blade else None
 
         # Built-in defaults so you don't need --ros-args
         default_topic = '/arm_position_controller/commands'
@@ -41,8 +67,11 @@ class Teleop(Node):
         # Timer publishes at a steady rate; guard against publishing after stop
         self.timer = self.create_timer(1.0 / rate_hz, self._publish)
 
-        self.get_logger().info(f"Publishing to {self.topic} at {rate_hz} Hz (step={self.step})")
+        self.get_logger().info(
+            f"Model {profile['model']}: publishing to {self.topic} at {rate_hz} Hz (step={self.step})")
         self.get_logger().info(HELP)
+        if self.has_blade:
+            self.get_logger().info(HELP_BLADE)
 
         # Non-blocking keyboard reader in a thread
         self._kb_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
@@ -53,6 +82,17 @@ class Teleop(Node):
         if self._stop.is_set():
             return
         self.pub.publish(Float64MultiArray(data=self.q))
+
+    def _publish_blade(self):
+        if self._stop.is_set() or self.blade_pub is None:
+            return
+        traj = JointTrajectory()
+        traj.joint_names = ['blade_rotation']
+        pt = JointTrajectoryPoint()
+        pt.positions = [self.blade]
+        pt.time_from_start = Duration(sec=0, nanosec=200_000_000)
+        traj.points.append(pt)
+        self.blade_pub.publish(traj)
 
     def _keyboard_loop(self):
         fd = sys.stdin.fileno()
@@ -86,6 +126,11 @@ class Teleop(Node):
                     self.q[3] = clamp([self.q[0], self.q[1], self.q[2], self.q[3] + self.step])[3]
                 elif c == 'l':
                     self.q[3] = clamp([self.q[0], self.q[1], self.q[2], self.q[3] - self.step])[3]
+                elif c in ('u', 'o') and self.has_blade:
+                    # negative = blade up
+                    delta = -self.step if c == 'u' else self.step
+                    self.blade = max(self.blade_min, min(self.blade_max, self.blade + delta))
+                    self._publish_blade()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 

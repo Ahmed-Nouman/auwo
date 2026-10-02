@@ -17,6 +17,8 @@
 
   <!-- Needs the description package -->
   <exec_depend>excavator_description</exec_depend>
+  <exec_depend>excavator_models</exec_depend>
+  <exec_depend>excavator_v2_description</exec_depend>
   <exec_depend>truck_description</exec_depend>
 
   <!-- For publish_robot_descriptions.py and imu_to_pose.py -->

@@ -1,7 +1,7 @@
 # ROS2 workspace ignore rules
-.cursor/
-.roslog/
-.vscode/
+.roslog
+.cursor
+.vscode
 
 # Ignore build, install, and log directories
 build/

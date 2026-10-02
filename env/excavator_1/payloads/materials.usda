@@ -1,0 +1,192 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.3.2"
+    }
+    endTimeCode = 1000000
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    startTimeCode = 0
+    upAxis = "Z"
+)
+
+def Scope "Materials"
+{
+    def Material "imu_material"
+    {
+        color3f inputs:diffuseColor = (0.78741235, 0.17064494, 0.010022826)
+        float inputs:metallic = 0
+        float inputs:opacity = 1
+        float inputs:roughness = 0.5
+        token inputs:wrapMode = "repeat"
+        token outputs:displacement (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:displacement.connect = </Materials/imu_material/PreviewSurface.outputs:displacement>
+        token outputs:surface (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:surface.connect = </Materials/imu_material/PreviewSurface.outputs:surface>
+        token outputs:volume (
+            displayGroup = "Outputs"
+        )
+
+        def Shader "PreviewSurface" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdPreviewSurface"
+            prepend color3f inputs:diffuseColor.connect = </Materials/imu_material.inputs:diffuseColor>
+            prepend float inputs:metallic.connect = </Materials/imu_material.inputs:metallic>
+            prepend float inputs:opacity.connect = </Materials/imu_material.inputs:opacity>
+            prepend float inputs:roughness.connect = </Materials/imu_material.inputs:roughness>
+            token outputs:displacement
+            token outputs:surface
+        }
+    }
+
+    def Material "lidar_base_material"
+    {
+        color3f inputs:diffuseColor = (0.010022826, 0.21404114, 0.6920712)
+        float inputs:metallic = 0
+        float inputs:opacity = 1
+        float inputs:roughness = 0.5
+        token inputs:wrapMode = "repeat"
+        token outputs:displacement (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:displacement.connect = </Materials/lidar_base_material/PreviewSurface.outputs:displacement>
+        token outputs:surface (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:surface.connect = </Materials/lidar_base_material/PreviewSurface.outputs:surface>
+        token outputs:volume (
+            displayGroup = "Outputs"
+        )
+
+        def Shader "PreviewSurface" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdPreviewSurface"
+            prepend color3f inputs:diffuseColor.connect = </Materials/lidar_base_material.inputs:diffuseColor>
+            prepend float inputs:metallic.connect = </Materials/lidar_base_material.inputs:metallic>
+            prepend float inputs:opacity.connect = </Materials/lidar_base_material.inputs:opacity>
+            prepend float inputs:roughness.connect = </Materials/lidar_base_material.inputs:roughness>
+            token outputs:displacement
+            token outputs:surface
+        }
+    }
+
+    def Material "lidar_dome_material"
+    {
+        color3f inputs:diffuseColor = (0.033104762, 0.31854683, 0.78741235)
+        float inputs:metallic = 0
+        float inputs:opacity = 0.95
+        float inputs:roughness = 0.5
+        token inputs:wrapMode = "repeat"
+        token outputs:displacement (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:displacement.connect = </Materials/lidar_dome_material/PreviewSurface.outputs:displacement>
+        token outputs:surface (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:surface.connect = </Materials/lidar_dome_material/PreviewSurface.outputs:surface>
+        token outputs:volume (
+            displayGroup = "Outputs"
+        )
+
+        def Shader "PreviewSurface" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdPreviewSurface"
+            prepend color3f inputs:diffuseColor.connect = </Materials/lidar_dome_material.inputs:diffuseColor>
+            prepend float inputs:metallic.connect = </Materials/lidar_dome_material.inputs:metallic>
+            prepend float inputs:opacity.connect = </Materials/lidar_dome_material.inputs:opacity>
+            prepend float inputs:roughness.connect = </Materials/lidar_dome_material.inputs:roughness>
+            token outputs:displacement
+            token outputs:surface
+        }
+    }
+
+    def Material "Excavator"
+    {
+        asset inputs:DiffuseTexture = @../Textures/Excavator_BaseColor.png@
+        float inputs:ior = 1.5
+        float inputs:metallic = 0
+        asset inputs:NormalTexture = @@
+        float inputs:opacity = 1
+        float inputs:roughness = 0.5
+        token inputs:wrapMode = "repeat"
+        token outputs:displacement (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:displacement.connect = </Materials/Excavator/PreviewSurface.outputs:displacement>
+        token outputs:surface (
+            displayGroup = "Outputs"
+        )
+        prepend token outputs:surface.connect = </Materials/Excavator/PreviewSurface.outputs:surface>
+        token outputs:volume (
+            displayGroup = "Outputs"
+        )
+
+        def Shader "PreviewSurface" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdPreviewSurface"
+            prepend color3f inputs:diffuseColor.connect = </Materials/Excavator/DiffuseTexture.outputs:rgb>
+            prepend float inputs:ior.connect = </Materials/Excavator.inputs:ior>
+            prepend float inputs:metallic.connect = </Materials/Excavator.inputs:metallic>
+            prepend normal3f inputs:normal.connect = </Materials/Excavator/NormalTexture.outputs:rgb>
+            prepend float inputs:opacity.connect = </Materials/Excavator.inputs:opacity>
+            prepend float inputs:roughness.connect = </Materials/Excavator.inputs:roughness>
+            token outputs:displacement
+            token outputs:surface
+        }
+
+        def Shader "DiffuseTexture" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdUVTexture"
+            float4 inputs:fallback = (0.31854683, 0.31854683, 0.31854683, 1)
+            prepend asset inputs:file.connect = </Materials/Excavator.inputs:DiffuseTexture>
+            token inputs:sourceColorSpace = "auto"
+            prepend float2 inputs:st.connect = </Materials/Excavator/Primvar_st_float2.outputs:result>
+            token inputs:wrapS = "repeat"
+            prepend token inputs:wrapS.connect = </Materials/Excavator.inputs:wrapMode>
+            token inputs:wrapT = "repeat"
+            prepend token inputs:wrapT.connect = </Materials/Excavator.inputs:wrapMode>
+            float3 outputs:rgb
+        }
+
+        def Shader "Primvar_st_float2" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+
+        def Shader "NormalTexture" (
+            apiSchemas = ["NodeDefAPI"]
+        )
+        {
+            token info:id = "UsdUVTexture"
+            float4 inputs:fallback = (0, 0, 1, 1)
+            prepend asset inputs:file.connect = </Materials/Excavator.inputs:NormalTexture>
+            token inputs:sourceColorSpace = "raw"
+            prepend float2 inputs:st.connect = </Materials/Excavator/Primvar_st_float2.outputs:result>
+            token inputs:wrapS = "repeat"
+            prepend token inputs:wrapS.connect = </Materials/Excavator.inputs:wrapMode>
+            token inputs:wrapT = "repeat"
+            prepend token inputs:wrapT.connect = </Materials/Excavator.inputs:wrapMode>
+            float3 outputs:rgb
+        }
+    }
+}
+

@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>excavator_models</name>
+  <version>0.1.0</version>
+  <description>
+    Excavator model selection for the AUWO workspace (v1 = excavator_description,
+    v2 = excavator_v2_description) and the v2 hydraulic cylinder / bucket linkage node.
+  </description>
+  <maintainer email="ahmed.nouman@centria.fi">Ahmed Nouman</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- The description packages are found at runtime through the ament index.
+       They are intentionally not listed here to avoid a dependency cycle
+       (excavator_v2_description uses this package's node). -->
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

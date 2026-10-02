@@ -1,0 +1,81 @@
+# ros2_control controllers for the v2 excavator (Gazebo gz_ros2_control and mock hardware).
+# Controller names match excavator_description (v1) so MoveIt, the trajectory adapter and
+# the twin router work unchanged. blade_controller and linkage_controller are v2 additions.
+controller_manager:
+  ros__parameters:
+    update_rate: 200  # Hz
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    # Declared like in v1; /arm_position_controller/commands is only a topic read by
+    # trajectory_command_adapter. Do not activate it together with arm_trajectory_controller.
+    arm_position_controller:
+      type: position_controllers/JointGroupPositionController
+    arm_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    blade_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    # Hydraulic cylinders + bucket linkage, commanded by excavator_models/linkage_state_publisher
+    linkage_controller:
+      type: forward_command_controller/ForwardCommandController
+
+arm_position_controller:
+  ros__parameters:
+    joints:
+      - body_rotation
+      - boom_rotation
+      - stick_rotation
+      - bucket_rotation
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+
+arm_trajectory_controller:
+  ros__parameters:
+    joints:
+      - body_rotation
+      - boom_rotation
+      - stick_rotation
+      - bucket_rotation
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 50.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    # MoveIt time-parameterized trajectories often end with small non-zero velocities; JTC rejects those goals otherwise.
+    allow_nonzero_velocity_at_trajectory_end: true
+    constraints:
+      goal_time: 0.5
+
+blade_controller:
+  ros__parameters:
+    joints:
+      - blade_rotation
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_nonzero_velocity_at_trajectory_end: true
+    constraints:
+      goal_time: 1.0
+
+linkage_controller:
+  ros__parameters:
+    # order must match LINKAGE_JOINTS in excavator_models/linkage_kinematics.py
+    joints:
+      - boom_cyl_barrel_joint
+      - boom_cyl_rod_joint
+      - stick_cyl_barrel_joint
+      - stick_cyl_rod_joint
+      - bucket_rocker_joint
+      - bucket_hlink_joint
+      - bucket_cyl_barrel_joint
+      - bucket_cyl_rod_joint
+      - blade_cyl_barrel_joint
+      - blade_cyl_rod_joint
+    interface_name: position

@@ -1,0 +1,276 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.3.2"
+    }
+    defaultPrim = "excavator"
+    endTimeCode = 1000000
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    startTimeCode = 0
+    upAxis = "Z"
+)
+
+over "excavator" (
+    prepend apiSchemas = ["IsaacRobotAPI"]
+)
+{
+    prepend rel isaac:physics:robotJoints = [
+        </excavator/Physics/base_to_base_link>,
+        </excavator/Physics/body_rotation>,
+        </excavator/Physics/blade_rotation>,
+        </excavator/Physics/blade_cyl_barrel_joint>,
+        </excavator/Physics/boom_rotation>,
+        </excavator/Physics/boom_cyl_barrel_joint>,
+        </excavator/Physics/body_to_imu>,
+        </excavator/Physics/body_to_lidar>,
+        </excavator/Physics/stick_rotation>,
+        </excavator/Physics/stick_cyl_barrel_joint>,
+        </excavator/Physics/bucket_rotation>,
+        </excavator/Physics/bucket_rocker_joint>,
+        </excavator/Physics/bucket_cyl_barrel_joint>,
+        </excavator/Physics/bucket_hlink_joint>,
+        </excavator/Physics/bucket_cyl_rod_joint>,
+        </excavator/Physics/stick_cyl_rod_joint>,
+        </excavator/Physics/boom_cyl_rod_joint>,
+        </excavator/Physics/blade_cyl_rod_joint>,
+    ]
+    prepend rel isaac:physics:robotLinks = [
+        </excavator/Geometry/base_link/base>,
+        </excavator/Geometry/base_link/base/body>,
+        </excavator/Geometry/base_link/base/body/boom>,
+        </excavator/Geometry/base_link/base/body/boom/stick>,
+        </excavator/Geometry/base_link/base/body/boom/stick/bucket>,
+        </excavator/Geometry/base_link/base/body/boom/stick/bucket_rocker>,
+        </excavator/Geometry/base_link/base/body/boom/stick/bucket_rocker/bucket_hlink>,
+        </excavator/Geometry/base_link/base/body/boom/stick/bucket_cyl_barrel>,
+        </excavator/Geometry/base_link/base/body/boom/stick/bucket_cyl_barrel/bucket_cyl_rod>,
+        </excavator/Geometry/base_link/base/body/boom/stick_cyl_barrel>,
+        </excavator/Geometry/base_link/base/body/boom/stick_cyl_barrel/stick_cyl_rod>,
+        </excavator/Geometry/base_link/base/body/boom_cyl_barrel>,
+        </excavator/Geometry/base_link/base/body/boom_cyl_barrel/boom_cyl_rod>,
+        </excavator/Geometry/base_link/base/body/sensor_imu_link>,
+        </excavator/Geometry/base_link/base/body/sensor_lidar_link>,
+        </excavator/Geometry/base_link/base/blade>,
+        </excavator/Geometry/base_link/base/blade_cyl_barrel>,
+        </excavator/Geometry/base_link/base/blade_cyl_barrel/blade_cyl_rod>,
+    ]
+    token isaac:robotType = "Default"
+
+    over "Geometry"
+    {
+        over "base_link"
+        {
+            over "base" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+                over "body" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "boom" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                        over "stick" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                            over "bucket" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                            }
+
+                            over "bucket_rocker" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                                over "bucket_hlink" (
+                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                )
+                                {
+                                }
+                            }
+
+                            over "bucket_cyl_barrel" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                                over "bucket_cyl_rod" (
+                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                )
+                                {
+                                }
+                            }
+                        }
+
+                        over "stick_cyl_barrel" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                            over "stick_cyl_rod" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                            }
+                        }
+                    }
+
+                    over "boom_cyl_barrel" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                        over "boom_cyl_rod" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                        }
+                    }
+
+                    over "sensor_imu_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+
+                    over "sensor_lidar_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+                }
+
+                over "blade" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                }
+
+                over "blade_cyl_barrel" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "blade_cyl_rod" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                    }
+                }
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        over "base_to_base_link" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "body_rotation" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "boom_rotation" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "stick_rotation" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "bucket_rotation" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "blade_rotation" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "bucket_rocker_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "bucket_hlink_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "boom_cyl_barrel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "boom_cyl_rod_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "stick_cyl_barrel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "stick_cyl_rod_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "bucket_cyl_barrel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "bucket_cyl_rod_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "blade_cyl_barrel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "blade_cyl_rod_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "body_to_imu" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "body_to_lidar" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+    }
+}
+

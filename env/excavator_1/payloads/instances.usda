@@ -1,0 +1,461 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.3.2"
+    }
+    endTimeCode = 1000000
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    startTimeCode = 0
+    upAxis = "Z"
+)
+
+def Scope "Instances"
+{
+    def Xform "base" (
+        prepend references = @./geometries.usd@</Geometries/base>
+    )
+    {
+        over "base" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/base/VisualMaterials/Excavator>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "base_1" (
+        prepend references = @./geometries.usd@</Geometries/base>
+    )
+    {
+        over "base" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "body" (
+        prepend references = @./geometries.usd@</Geometries/body>
+    )
+    {
+        over "body" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/body/VisualMaterials/Excavator_1>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_1" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "body_1" (
+        prepend references = @./geometries.usd@</Geometries/body>
+    )
+    {
+        over "body" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "boom" (
+        prepend references = @./geometries.usd@</Geometries/boom>
+    )
+    {
+        over "boom" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/boom/VisualMaterials/Excavator_2>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_2" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "boom_1" (
+        prepend references = @./geometries.usd@</Geometries/boom>
+    )
+    {
+        over "boom" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "stick" (
+        prepend references = @./geometries.usd@</Geometries/stick>
+    )
+    {
+        over "stick" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/stick/VisualMaterials/Excavator_3>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_3" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "stick_1" (
+        prepend references = @./geometries.usd@</Geometries/stick>
+    )
+    {
+        over "stick" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "bucket" (
+        prepend references = @./geometries.usd@</Geometries/bucket>
+    )
+    {
+        over "bucket" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/bucket/VisualMaterials/Excavator_4>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_4" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "bucket_1" (
+        prepend references = @./geometries.usd@</Geometries/bucket>
+    )
+    {
+        over "bucket" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "bucket_rocker" (
+        prepend references = @./geometries.usd@</Geometries/bucket_rocker>
+    )
+    {
+        over "bucket_rocker" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/bucket_rocker/VisualMaterials/Excavator_6>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_6" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "bucket_hlink" (
+        prepend references = @./geometries.usd@</Geometries/bucket_hlink>
+    )
+    {
+        over "bucket_hlink" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/bucket_hlink/VisualMaterials/Excavator_7>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_7" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "bucket_cyl_barrel" (
+        prepend references = @./geometries.usd@</Geometries/bucket_cyl_barrel>
+    )
+    {
+        over "bucket_cyl_barrel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/bucket_cyl_barrel/VisualMaterials/Excavator_12>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_12" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "bucket_cyl_rod" (
+        prepend references = @./geometries.usd@</Geometries/bucket_cyl_rod>
+    )
+    {
+        over "bucket_cyl_rod" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/bucket_cyl_rod/VisualMaterials/Excavator_13>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_13" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "stick_cyl_barrel" (
+        prepend references = @./geometries.usd@</Geometries/stick_cyl_barrel>
+    )
+    {
+        over "stick_cyl_barrel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/stick_cyl_barrel/VisualMaterials/Excavator_10>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_10" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "stick_cyl_rod" (
+        prepend references = @./geometries.usd@</Geometries/stick_cyl_rod>
+    )
+    {
+        over "stick_cyl_rod" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/stick_cyl_rod/VisualMaterials/Excavator_11>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_11" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "boom_cyl_barrel" (
+        prepend references = @./geometries.usd@</Geometries/boom_cyl_barrel>
+    )
+    {
+        over "boom_cyl_barrel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/boom_cyl_barrel/VisualMaterials/Excavator_8>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_8" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "boom_cyl_rod" (
+        prepend references = @./geometries.usd@</Geometries/boom_cyl_rod>
+    )
+    {
+        over "boom_cyl_rod" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/boom_cyl_rod/VisualMaterials/Excavator_9>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_9" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "blade" (
+        prepend references = @./geometries.usd@</Geometries/blade>
+    )
+    {
+        over "blade" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/blade/VisualMaterials/Excavator_5>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_5" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "blade_1" (
+        prepend references = @./geometries.usd@</Geometries/blade>
+    )
+    {
+        over "blade" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
+        }
+    }
+
+    def Xform "blade_cyl_barrel" (
+        prepend references = @./geometries.usd@</Geometries/blade_cyl_barrel>
+    )
+    {
+        over "blade_cyl_barrel" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/blade_cyl_barrel/VisualMaterials/Excavator_14>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_14" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+
+    def Xform "blade_cyl_rod" (
+        prepend references = @./geometries.usd@</Geometries/blade_cyl_rod>
+    )
+    {
+        over "blade_cyl_rod" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            custom rel material:binding
+            prepend rel material:binding = </Instances/blade_cyl_rod/VisualMaterials/Excavator_15>
+        }
+
+        def Scope "VisualMaterials"
+        {
+            def Material "Excavator_15" (
+                instanceable = true
+                prepend references = @./materials.usda@</Materials/Excavator>
+            )
+            {
+            }
+        }
+    }
+}
+

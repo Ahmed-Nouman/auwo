@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>excavator_v2_description</name>
+  <version>0.3.0</version>
+  <description>
+    New AUWO excavator model (v2): URDF/xacro with blade, hydraulic cylinders and bucket
+    linkage, OBJ meshes, ros2_control config and model profile. The original model stays in
+    excavator_description (v1). Select with excavator_model:=v2.
+  </description>
+  <maintainer email="ahmed.nouman@centria.fi">Ahmed Nouman</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>excavator_models</exec_depend>
+  <exec_depend>ros2_controllers</exec_depend>
+  <exec_depend>gz_ros2_control</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

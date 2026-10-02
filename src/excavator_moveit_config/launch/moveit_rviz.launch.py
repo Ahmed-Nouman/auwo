@@ -13,6 +13,9 @@ from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
 
+from excavator_models import default_model
+from excavator_models.moveit import moveit_configs
+
 
 def _ompl_extra_env():
     extra_env = {"DISPLAY": os.environ.get("DISPLAY", "")}
@@ -32,11 +35,13 @@ def _opaque_rviz(context, *args, **kwargs):
         "true",
         "1",
     )
-    builder = MoveItConfigsBuilder("excavator", package_name="excavator_moveit_config")
-    builder.planning_pipelines(pipelines=["ompl"], load_all=False)
-    if use_mock:
-        builder.robot_description(mappings={"use_mock_hardware": "true"})
-    moveit_config = builder.to_moveit_configs()
+    # Model-specific URDF / SRDF / joint limits (v1 identical to the previous builder calls)
+    moveit_config, _profile = moveit_configs(
+        context.launch_configurations.get("excavator_model", ""),
+        use_mock_hardware=use_mock,
+        pipelines=["ompl"],
+        load_all=False,
+    )
 
     use_sim = context.launch_configurations.get("use_sim_time", "true").lower() in (
         "true",
@@ -95,6 +100,16 @@ def generate_launch_description():
 
     ld = LaunchDescription()
 
+    ld.add_action(
+        DeclareLaunchArgument(
+            "excavator_model",
+            default_value=default_model(),
+            description=(
+                "Excavator model: v1 (excavator_description) or v2 "
+                "(excavator_v2_description). Default: $AUWO_EXCAVATOR_MODEL or v2."
+            ),
+        )
+    )
     ld.add_action(
         DeclareLaunchArgument(
             "use_sim_time",

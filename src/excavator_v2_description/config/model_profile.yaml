@@ -1,0 +1,83 @@
+# Model profile read by excavator_models (select with excavator_model:=v2).
+# Everything the other AUWO packages need to know about this excavator model.
+label: "New mini excavator (Excavator_rig_packed.blend, hydraulic linkage)"
+xacro: urdf/excavator.urdf.xacro
+controllers: config/controllers.yaml
+control_urdf: urdf/excavator_control.urdf     # actuated joints only (sliders / demo pose)
+
+# RViz / MoveIt RViz: rewrite package:// mesh paths to file:// (reliable OBJ loading)
+resolve_mesh_uris: true
+# Simulation-only URDF patches (v1 needs them, v2 does not)
+sim_patches:
+  zero_base_yaw: false
+  zero_bucket_visual_rpy: false
+
+arm_joints: [body_rotation, boom_rotation, stick_rotation, bucket_rotation]
+# Sign convention: negative = boom up / stick out / bucket dump / blade up
+urdf_limits:
+  boom_rotation:   [-0.598, 1.037]
+  stick_rotation:  [-0.878, 1.047]
+  bucket_rotation: [-1.944, 1.29]
+  blade_rotation:  [-0.349, 0.401]
+# Ranges used by interactive markers, teleop and the excavation cycle (inside URDF limits)
+ui_limits:
+  body_rotation:   [-3.141592653589793, 3.141592653589793]
+  boom_rotation:   [-0.58, 1.00]
+  stick_rotation:  [-0.86, 1.02]
+  bucket_rotation: [-1.90, 1.26]
+
+# Controllers spawned after joint_state_broadcaster and arm_trajectory_controller
+extra_controllers: [blade_controller, linkage_controller]
+linkage:
+  enabled: true
+  controller: linkage_controller
+
+# Poses [body, boom, stick, bucket]. Body angles match v1 (world directions);
+# arm angles checked with forward kinematics for this model.
+safe_pose: [0.0, -0.25, 0.60, 0.80]
+demo_pose: [0.0, -0.25, 0.60, 0.80]
+presets:                  # RViz Preset Poses panel
+  Idle:      [-0.339, -0.25,  0.70,  0.90]
+  Dig:       [-3.192,  0.30, -0.30, -0.50]
+  Dump:      [ 0.74,  -0.57, -0.85, -1.50]
+  Transport: [ 0.0,   -0.35,  0.90,  1.20]
+cycle_sequence: [Idle, Transport, Dig, Transport, Dump, Transport]
+excavation_cycle:         # excavator_cycle node
+  PREPARE_DIG:         [0.0,  0.30, -0.45, -0.60]
+  SCOOP_AND_SLEW:      [0.4,  0.35,  0.40,  1.10]
+  LIFT_AND_ALIGN_DUMP: [0.74, -0.57, -0.85,  1.10]
+  DUMP:                [0.74, -0.57, -0.85, -1.50]
+  RETURN_HOME:         [0.0, -0.25,  0.60,  0.80]
+
+# Scene layout. The v2 reach is ~3.9 m, so the dump truck is closer than for v1:
+# dump bed ~3.1 m from the swing axis at yaw 0.74 rad; the bucket clears it at ~2.9 m.
+scene:
+  dumper_x: 2.8
+  dumper_y: 2.1
+  dumper_z: 0.5
+  dumper_yaw: 0.0
+  truck_box_x: 2.8
+  truck_box_y: 2.1
+  truck_box_z: 0.95
+  truck_box_yaw: 0.0
+  truck_box_lx: 4.2
+  truck_box_ly: 2.2
+  truck_box_lz: 1.7
+  imu_pose_z:             # height of the IMU pose arrow (imu_to_pose) per launcher
+    twin: 2.27
+    physical: 2.27
+
+# physical_tf_follower_node: Novatron angles -> v2 joint angles.
+# Derived geometrically from the v1 calibration (pin-to-pin lines of both models,
+# bucket teeth direction, v1 base yaw of 180 deg). Verify against a rosbag.
+physical_twin:
+  body_offset: 3.141592653589793
+  boom_offset: -1.6658
+  stick_offset: 1.3023
+  bucket_offset: -1.8937
+
+# excavator_moveit_config files (relative to that package)
+moveit:
+  srdf: config/v2/excavator.srdf
+  joint_limits: config/v2/joint_limits.yaml
+  controllers: config/excavator_controllers.yaml

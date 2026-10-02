@@ -2,9 +2,12 @@
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from std_msgs.msg import String, Float64MultiArray
 from sensor_msgs.msg import JointState
+
+from excavator_models import default_model, load_profile
 
 
 class TwinRouterNode(Node):
@@ -27,6 +30,11 @@ class TwinRouterNode(Node):
         command: /physical_twin/commands
         state:   /physical_twin/state
 
+    Model info (latched, for the RViz Preset Poses panel):
+      /excavator_twin/model     (String)  e.g. "v2"
+      /excavator_twin/presets   (String)  one line per preset: "<name> body boom stick bucket",
+                                          plus "cycle <name> <name> ..."
+
     Modes (string):
       "disabled"   -> block commands, do not republish state
       "simulation" -> commands -> sim only, state from sim
@@ -38,6 +46,7 @@ class TwinRouterNode(Node):
         super().__init__("twin_router_node")
 
         # Parameters (with reasonable defaults)
+        self.declare_parameter("excavator_model", default_model())
         self.declare_parameter("default_mode", "simulation")
         self.declare_parameter("sim_command_topic", "/arm_position_controller/commands")
         self.declare_parameter("sim_state_topic", "/joint_states")
@@ -98,10 +107,41 @@ class TwinRouterNode(Node):
             10,
         )
 
+        # Model-specific preset poses for the RViz panel (latched)
+        latched = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.model_pub = self.create_publisher(String, "/excavator_twin/model", latched)
+        self.presets_pub = self.create_publisher(String, "/excavator_twin/presets", latched)
+        self.publish_model_info(self.get_parameter("excavator_model").value)
+
         # Allow parameter-based mode change if desired
         self.add_on_set_parameters_callback(self.on_param_change)
 
         self.publish_mode()
+
+    # ------------------------------------------------------------------ #
+    # Model info                                                         #
+    # ------------------------------------------------------------------ #
+
+    def publish_model_info(self, model):
+        try:
+            profile = load_profile(model)
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f"Cannot load excavator model '{model}': {e}")
+            return
+        lines = []
+        for name, q in profile.get("presets", {}).items():
+            lines.append(name + " " + " ".join(f"{float(v):.4f}" for v in q))
+        seq = profile.get("cycle_sequence", [])
+        if seq:
+            lines.append("cycle " + " ".join(seq))
+        self.model_pub.publish(String(data=profile["model"]))
+        self.presets_pub.publish(String(data="\n".join(lines)))
+        self.get_logger().info(
+            f"Excavator model {profile['model']}: published {len(profile.get('presets', {}))} presets")
 
     # ------------------------------------------------------------------ #
     # Mode handling                                                      #
