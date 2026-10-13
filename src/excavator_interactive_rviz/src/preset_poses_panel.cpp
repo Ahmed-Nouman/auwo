@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QComboBox>
 #include <QTimer>
@@ -129,18 +130,9 @@ public:
     main_layout->addWidget(pose_label_);
     main_layout->addWidget(joint_label_);
 
-    // Row 1: Idle, Dig, Dump, Transport
-    auto * row1 = new QHBoxLayout;
-    idle_button_      = new QPushButton("Idle");
-    dig_button_       = new QPushButton("Dig");
-    dump_button_      = new QPushButton("Dump");
-    transport_button_ = new QPushButton("Transport");
-
-    row1->addWidget(idle_button_);
-    row1->addWidget(dig_button_);
-    row1->addWidget(dump_button_);
-    row1->addWidget(transport_button_);
-    main_layout->addLayout(row1);
+    // Preset buttons: one per preset of the model, rebuilt when the presets change
+    preset_grid_ = new QGridLayout;
+    main_layout->addLayout(preset_grid_);
 
     // Row 2: Run/Stop Cycle
     auto * row2 = new QHBoxLayout;
@@ -155,15 +147,21 @@ public:
 
     // --- Preset definitions -----------------------------------------------
     // joint order: [body_rotation, boom_rotation, stick_rotation, bucket_rotation]
-    // These are the v1 defaults. When twin_router_node runs, the presets of the
-    // selected excavator model arrive on /excavator_twin/presets and replace them.
-    presets_.push_back({"Idle",      {-0.339,  -0.639,  -0.809,  -0.660}});
-    presets_.push_back({"Dig",       {-3.192,  -0.509,  -1.760,  -1.690}});
-    presets_.push_back({"Dump",      {0.611,  -1.210,  -1.760,  -1.632}});
-    presets_.push_back({"Transport", {0.0,  -1.2,  -1.2,  -1.5}});
+    // Excavation cycle presets of the v2 model (same values as the excavator_arm
+    // group_states in its SRDF), all inside the URDF joint limits.
+    // v2 sign convention: negative = boom up / stick out / bucket dump.
+    // When twin_router_node runs, the presets of the selected excavator model arrive
+    // on /excavator_twin/presets and replace them (buttons are rebuilt to match).
+    presets_.push_back({"Home",  {0.0,   -0.25,  0.60,  0.80}});  // arm folded, bucket above ground
+    presets_.push_back({"Dig",   {0.0,    0.45, -0.75, -0.90}});  // stick out, bucket open, teeth at ground
+    presets_.push_back({"Drag",  {0.0,    0.30,  0.35,  0.40}});  // stick pulled in along the ground
+    presets_.push_back({"Lift",  {0.0,   -0.45,  0.30,  1.20}});  // boom up, bucket curled (load held)
+    presets_.push_back({"Swing", {0.74,  -0.57, -0.30,  1.20}});  // slewed to the dump truck
+    presets_.push_back({"Dump",  {0.74,  -0.57, -0.85, -1.50}});  // over the truck, bucket opened
 
-    // Work cycle: Idle -> Dig -> Transport -> Dump (loop)
-    cycle_sequence_ = {0, 3, 1, 3, 2, 3};
+    // Work cycle: Home -> Dig -> Drag -> Lift -> Swing -> Dump (loop)
+    cycle_sequence_ = {0, 1, 2, 3, 4, 5};
+    rebuildPresetButtons();
 
     // --- ROS 2 node + pub/sub ---------------------------------------------
     node_ = rclcpp::Node::make_shared("excavator_preset_panel");
@@ -205,11 +203,6 @@ public:
             this, SLOT(onModeChanged(int)));
     connect(enable_button_, SIGNAL(clicked()),
             this, SLOT(onEnableClicked()));
-
-    connect(idle_button_,      SIGNAL(clicked()), this, SLOT(onIdleClicked()));
-    connect(dig_button_,       SIGNAL(clicked()), this, SLOT(onDigClicked()));
-    connect(dump_button_,      SIGNAL(clicked()), this, SLOT(onDumpClicked()));
-    connect(transport_button_, SIGNAL(clicked()), this, SLOT(onTransportClicked()));
 
     connect(run_cycle_button_,  SIGNAL(clicked()), this, SLOT(onRunCycleClicked()));
     connect(stop_cycle_button_, SIGNAL(clicked()), this, SLOT(onStopCycleClicked()));
@@ -263,13 +256,6 @@ private Q_SLOTS:
     updateStatusLabel();
     publishRouterMode();
   }
-
-  // --- Preset buttons ------------------------------------------------------
-
-  void onIdleClicked()      { sendPresetByName("Idle"); }
-  void onDigClicked()       { sendPresetByName("Dig"); }
-  void onDumpClicked()      { sendPresetByName("Dump"); }
-  void onTransportClicked() { sendPresetByName("Transport"); }
 
   // --- Work cycle buttons --------------------------------------------------
 
@@ -373,6 +359,7 @@ private:
       cycle_sequence_ = cycle;
     }
     cycle_index_ = 0;
+    rebuildPresetButtons();
     updatePoseStatus();
   }
 
@@ -383,6 +370,24 @@ private:
     QString name;
     std::array<double, 4> joints;
   };
+
+  // One button per preset, three per row, in the order of the model profile
+  void rebuildPresetButtons()
+  {
+    for (auto * b : preset_buttons_) {
+      preset_grid_->removeWidget(b);
+      b->deleteLater();
+    }
+    preset_buttons_.clear();
+    const int columns = 3;
+    for (size_t i = 0; i < presets_.size(); ++i) {
+      auto * b = new QPushButton(presets_[i].name);
+      const QString name = presets_[i].name;
+      connect(b, &QPushButton::clicked, this, [this, name]() {sendPresetByName(name);});
+      preset_grid_->addWidget(b, static_cast<int>(i) / columns, static_cast<int>(i) % columns);
+      preset_buttons_.push_back(b);
+    }
+  }
 
   void sendPresetByName(const QString & name)
   {
@@ -545,10 +550,8 @@ private:
   QLabel * pose_label_;
   QLabel * joint_label_;
 
-  QPushButton * idle_button_;
-  QPushButton * dig_button_;
-  QPushButton * dump_button_;
-  QPushButton * transport_button_;
+  QGridLayout * preset_grid_;
+  std::vector<QPushButton *> preset_buttons_;
   QPushButton * run_cycle_button_;
   QPushButton * stop_cycle_button_;
 };
@@ -562,4 +565,5 @@ private:
 PLUGINLIB_EXPORT_CLASS(
   excavator_interactive_rviz::PresetPosesPanel,
   rviz_common::Panel)
+
 

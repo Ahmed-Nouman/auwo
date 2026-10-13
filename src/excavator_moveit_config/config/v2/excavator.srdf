@@ -13,11 +13,56 @@
   </group>
 
   <!-- Arm folded, bucket above ground (same as the v2 safe pose) -->
-  <group_state name="home" group="excavator_arm">
+  <group_state name="Home" group="excavator_arm">
     <joint name="body_rotation" value="0"/>
     <joint name="boom_rotation" value="-0.25"/>
     <joint name="stick_rotation" value="0.6"/>
     <joint name="bucket_rotation" value="0.8"/>
+  </group_state>
+
+  <!-- Excavation cycle presets: scoop -> drag -> lift -> transport -> dump.
+       Shown in the RViz MotionPlanning "Goal State" dropdown; also usable as named targets
+       (MoveGroupInterface::setNamedTarget). Values stay inside the URDF joint limits and the
+       planning body_rotation bound [-pi, pi].
+       v2 sign convention: negative = boom up / stick out / bucket dump. -->
+  <!-- Scoop: stick reached out, bucket open, teeth just above the ground in front -->
+  <group_state name="Dig" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="0.19"/>
+    <joint name="stick_rotation" value="-0.75"/>
+    <joint name="bucket_rotation" value="-0.9"/>
+  </group_state>
+
+  <!-- Drag: stick pulled in, teeth just above the ground, stick end clear of it -->
+  <group_state name="Drag" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="-0.1"/>
+    <joint name="stick_rotation" value="0.35"/>
+    <joint name="bucket_rotation" value="-0.33"/>
+  </group_state>
+
+  <!-- Lift: boom up with the bucket fully curled (load held), still facing the dig -->
+  <group_state name="Lift" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="-0.45"/>
+    <joint name="stick_rotation" value="0.3"/>
+    <joint name="bucket_rotation" value="1.2"/>
+  </group_state>
+
+  <!-- Transport: slewed to the dump truck (profile dump yaw), bucket curled and high -->
+  <group_state name="Swing" group="excavator_arm">
+    <joint name="body_rotation" value="0.74"/>
+    <joint name="boom_rotation" value="-0.57"/>
+    <joint name="stick_rotation" value="-0.3"/>
+    <joint name="bucket_rotation" value="1.2"/>
+  </group_state>
+
+  <!-- Dump: over the truck, bucket opened (same as the cycle DUMP pose) -->
+  <group_state name="Dump" group="excavator_arm">
+    <joint name="body_rotation" value="0.74"/>
+    <joint name="boom_rotation" value="-0.57"/>
+    <joint name="stick_rotation" value="-0.85"/>
+    <joint name="bucket_rotation" value="-1.5"/>
   </group_state>
 
   <end_effector name="bucket" parent_link="bucket" group="excavator_arm"/>
@@ -61,3 +106,4 @@
   <disable_collisions link1="sensor_imu_link" link2="stick" reason="Never"/>
   <disable_collisions link1="sensor_lidar_link" link2="stick" reason="Never"/>
 </robot>
+

@@ -31,12 +31,17 @@ linkage:
 # Poses [body, boom, stick, bucket]
 safe_pose: [0.0, -0.5, -1.0, -1.0]
 demo_pose: [0.0, -0.70, -1.26, -1.12]
-presets:                  # RViz Preset Poses panel
-  Idle:      [-0.339, -0.639, -0.809, -0.660]
-  Dig:       [-3.192, -0.509, -1.760, -1.690]
-  Dump:      [ 0.611, -1.210, -1.760, -1.632]
-  Transport: [ 0.0,   -1.2,   -1.2,   -1.5]
-cycle_sequence: [Idle, Transport, Dig, Transport, Dump, Transport]
+# Same cycle as v2 (Home, Dig, Drag, Lift, Swing, Dump), in v1 joint values:
+# more negative boom = boom up, more negative bucket = curled. All inside ui_limits.
+presets:                  # RViz Preset Poses panel, one button each, in this order
+  Home:  [0.0,   -1.00, -1.50, -1.00]   # arm folded, bucket above ground
+  Dig:   [0.0,   -0.49, -1.60, -0.80]   # stick out, bucket open, stick end ~0.45 m above ground
+  Drag:  [0.0,   -0.57, -0.60, -1.40]   # stick pulled in, stick end ~0.45 m above ground
+  Lift:  [0.0,   -1.00, -1.00, -2.00]   # boom up, bucket curled (load held)
+  Swing: [0.611, -1.21, -1.30, -2.00]   # slewed to the dump truck, bucket curled
+  Dump:  [0.611, -1.21, -1.60, -0.60]   # over the truck, bucket opened
+
+cycle_sequence: [Home, Dig, Drag, Lift, Swing, Dump]
 excavation_cycle:         # excavator_cycle node
   PREPARE_DIG:         [0.0, -1.20, -2.20, -0.50]
   SCOOP_AND_SLEW:      [0.5, -1.10, -1.80, -2.20]
@@ -72,3 +77,4 @@ moveit:
   srdf: config/excavator.srdf
   joint_limits: config/joint_limits.yaml
   controllers: config/excavator_controllers.yaml
+
