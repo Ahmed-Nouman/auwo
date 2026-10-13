@@ -60,6 +60,51 @@
     <joint name="bucket_rotation" value="-1.5"/>
   </group_state>
 
+  <!-- Excavation cycle presets: scoop -> drag -> lift -> transport -> dump.
+       Shown in the RViz MotionPlanning "Goal State" dropdown; also usable as named targets
+       (MoveGroupInterface::setNamedTarget). Values stay inside the URDF joint limits and the
+       planning body_rotation bound [-pi, pi].
+       v1 sign convention: more negative boom = boom up, more negative bucket = curled. -->
+  <!-- Scoop: stick reached out, bucket open, teeth at the ground in front -->
+  <group_state name="scoop" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="-0.35"/>
+    <joint name="stick_rotation" value="-1.6"/>
+    <joint name="bucket_rotation" value="-0.8"/>
+  </group_state>
+
+  <!-- Drag: stick pulled in along the ground, bucket half curled -->
+  <group_state name="drag" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="-0.3"/>
+    <joint name="stick_rotation" value="-0.6"/>
+    <joint name="bucket_rotation" value="-1.4"/>
+  </group_state>
+
+  <!-- Lift: boom up with the bucket fully curled (load held), still facing the dig -->
+  <group_state name="lift" group="excavator_arm">
+    <joint name="body_rotation" value="0"/>
+    <joint name="boom_rotation" value="-1.0"/>
+    <joint name="stick_rotation" value="-1.0"/>
+    <joint name="bucket_rotation" value="-2.0"/>
+  </group_state>
+
+  <!-- Transport: slewed to the dump truck (Dump preset yaw), bucket curled and high -->
+  <group_state name="transport" group="excavator_arm">
+    <joint name="body_rotation" value="0.611"/>
+    <joint name="boom_rotation" value="-1.21"/>
+    <joint name="stick_rotation" value="-1.3"/>
+    <joint name="bucket_rotation" value="-2.0"/>
+  </group_state>
+
+  <!-- Dump: over the truck, bucket opened -->
+  <group_state name="dump" group="excavator_arm">
+    <joint name="body_rotation" value="0.611"/>
+    <joint name="boom_rotation" value="-1.21"/>
+    <joint name="stick_rotation" value="-1.6"/>
+    <joint name="bucket_rotation" value="-0.6"/>
+  </group_state>
+
   <end_effector name="bucket" parent_link="bucket" group="excavator_arm"/>
 
   <!-- Adjacent / fixed-attached links: disable to reduce false self-collisions from mesh coarseness -->
