@@ -1,0 +1,36 @@
+# AUWO sensor configuration: cab_only
+#
+# One 16-beam lidar (AUWO_Puck16 ~ Velodyne Puck LITE / RS-LiDAR-16),
+# mounted centrally on the cab roof, tilted forward.
+#
+# USD scene:  excavator_cab_only.usd
+#
+# Coverage note: sensor sits ~2.43 m above ground. With 30 deg forward tilt the
+# 16 beams span 15-45 deg depression -> ground coverage 2.4 m to 9.1 m.
+# The arm sits in the middle of the scan, so the dig zone is partly occluded.
+
+name: cab_only
+description: >
+  Single 16-beam lidar, cab roof centre, 30 deg forward tilt.
+  Baseline configuration. Good 360 deg surround coverage via cab slew,
+  but the boom shadows the dig zone directly in front.
+
+usd_scene: excavator_cab_only.usd
+
+lidars:
+  - frame: lidar_cab
+    parent: sensor_lidar_link
+    topic: /lidar_cab/points
+    sensor_profile: AUWO_Puck16
+    # pose relative to `parent`, read from the USD stage
+    xyz: [0.189769, 0.027852, 1.425159]
+    quat_xyzw: [0.385498, 0.0, 0.922709, 0.0]
+    # documentation only - the quaternion above is authoritative
+    tilt_deg: 30.0
+    height_above_ground_m: 2.43
+    ground_coverage_m: [2.43, 9.07]
+
+mapping:
+  min_range: 2.2      # kills the cab/roof self-hit ring
+  inflate: 0.15       # link-box margin for arm self-filter
+  voxel_size: 0.10

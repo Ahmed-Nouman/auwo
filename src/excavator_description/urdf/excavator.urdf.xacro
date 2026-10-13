@@ -178,7 +178,7 @@
     <parent link="body"/>
     <child link="boom"/>
     <axis xyz="0 1 0"/>
-    <origin xyz="0.933 -0.134 0.302"/>
+    <origin xyz="0.933 0.0 0.302"/>
     <dynamics damping="10.0" friction="1.5"/>
     <limit effort="4000.0" lower="-1.40" upper="0.20" velocity="1.0"/>
   </joint>
@@ -360,4 +360,3 @@
   </gazebo>
 
 </robot>
-

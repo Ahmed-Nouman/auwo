@@ -1,19 +1,29 @@
 """
-MoveIt + RViz with Gazebo Harmonic by default (excavator in sim + Plan/Execute).
+MoveIt + RViz for the excavator: mock ros2_control by default, Gazebo Harmonic on request.
 
-  # Default: Gazebo + use_sim_time (excavation site world unless overridden).
-  # Gazebo starts paused; press Play in the sim GUI to run physics.
+  # Default: mock ros2_control (no Gazebo), local /controller_manager, wall clock.
   ros2 launch excavator_moveit_config bucket_moveit.launch.py
-  # Original excavator model instead of the new one:
+
+  # Gazebo: excavator in sim + Plan/Execute, use_sim_time switches on automatically.
+  # Gazebo starts paused; press Play in the sim GUI to run physics.
+  ros2 launch excavator_moveit_config bucket_moveit.launch.py use_gazebo:=true
+
+  # Original excavator model instead of the new one (works in either mode):
   ros2 launch excavator_moveit_config bucket_moveit.launch.py excavator_model:=v1
 
-  # Mock ros2_control only (no Gazebo): local /controller_manager + mock hardware
-  ros2 launch excavator_moveit_config bucket_moveit.launch.py \\
-    include_gazebo:=false use_sim_time:=false
+  use_sim_time is left empty by default and then follows use_gazebo
+  (true with Gazebo, false with mock). Set it explicitly only to override that,
+  e.g. mock hardware driven by an external /clock.
 
-  include_gazebo:=false does not attach to an already-running Gazebo. For
+  use_gazebo:=false does not attach to an already-running Gazebo. For
   auwo_twin + MoveIt, use a separate launch or domain that connects only to the
   existing sim (avoid two /controller_manager).
+
+  The dump-truck collision box (block in RViz) is off by default; add
+  publish_truck_obstacle:=true to have MoveIt plan around the truck.
+
+  Gazebo-only arguments (world, use_excavation_site, publish_truck_obstacle,
+  gazebo_*, headless, truck_box_*) are ignored in mock mode.
 
 Defaults to ROS_DOMAIN_ID=0 (standard/default domain).
 """
@@ -25,7 +35,6 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
-    GroupAction,
     IncludeLaunchDescription,
     LogInfo,
     OpaqueFunction,
@@ -33,297 +42,106 @@ from launch.actions import (
     SetEnvironmentVariable,
     TimerAction,
 )
-from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
 from excavator_models import default_model
 from excavator_models.moveit import moveit_configs
 
+TRAJECTORY_ACTION = "/arm_trajectory_controller/follow_joint_trajectory"
+CONTROLLER_MANAGER = "/controller_manager"
+
+
+def _truthy(value):
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
 
 def _setup(context, *args, **kwargs):
     pkg_moveit = get_package_share_directory("excavator_moveit_config")
-    pkg_gazebo = get_package_share_directory("excavator_gazebo")
-
     cfg = context.launch_configurations
-    use_sim = LaunchConfiguration("use_sim_time")
-    include_gz = LaunchConfiguration("include_gazebo")
 
-    # ---- Mock hardware (no Gazebo): same builder pattern as demo_moveit_rviz ----
+    include_gz = _truthy(cfg.get("use_gazebo", "false"))
+    sim_time_arg = cfg.get("use_sim_time", "").strip()
+    use_sim = _truthy(sim_time_arg) if sim_time_arg else include_gz
+    use_sim_str = "true" if use_sim else "false"
+    mock_str = "false" if include_gz else "true"
+    sim_param = {"use_sim_time": use_sim}
+
+    # Profile (model, controllers, scene, linkage) is the same for both modes; the mock
+    # robot_description is only used by the local ros2_control/RSP nodes in mock mode.
+    # In Gazebo mode move_group.launch.py builds its own config with use_mock_hardware=false.
     moveit_mock, profile = moveit_configs(
         cfg.get("excavator_model", ""), use_mock_hardware=True, pipelines=["ompl"])
     model = profile["model"]
     scene = profile.get("scene", {})
-    controllers_yaml = profile["controllers_path"]
     robot_desc_mock = moveit_mock.robot_description
 
     def _scene(arg, key):
         """Launch argument if given, otherwise the model profile value."""
         value = cfg.get(arg, "").strip()
-        return value if value else str(scene.get(key, 0.0))
+        return float(value) if value else float(scene.get(key, 0.0))
 
-    ros2_control_node = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        output="screen",
-        parameters=[
-            robot_desc_mock,
-            controllers_yaml,
-            {"use_sim_time": ParameterValue(use_sim, value_type=bool)},
-        ],
-        condition=UnlessCondition(include_gz),
-    )
+    def _spawner(name):
+        return Node(
+            package="controller_manager",
+            executable="spawner",
+            arguments=[name, "--controller-manager", CONTROLLER_MANAGER],
+            output="screen",
+        )
 
-    robot_state_publisher_mock = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        output="screen",
-        parameters=[
-            robot_desc_mock,
-            {"use_sim_time": ParameterValue(use_sim, value_type=bool)},
-        ],
-        condition=UnlessCondition(include_gz),
-    )
-
-    # Same SRDF virtual_joint (world -> base_link) as demo_moveit_rviz; mock stack had no Gazebo excavator_world_tf.
-    world_tf_mock = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        arguments=[
-            "--frame-id",
-            "world",
-            "--child-frame-id",
-            "base_link",
-            "--x",
-            "0",
-            "--y",
-            "0",
-            "--z",
-            "0",
-            "--qx",
-            "0",
-            "--qy",
-            "0",
-            "--qz",
-            "0",
-            "--qw",
-            "1",
-        ],
-        parameters=[{"use_sim_time": ParameterValue(use_sim, value_type=bool)}],
-        condition=UnlessCondition(include_gz),
-    )
-
-    spawner_jsb = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        output="screen",
-        condition=UnlessCondition(include_gz),
-    )
-
-    spawner_arm = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "arm_trajectory_controller",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        output="screen",
-        condition=UnlessCondition(include_gz),
-    )
-
-    # ---- Gazebo (excavator in sim); ros2_control lives inside gz ----
-    use_excavation_site = LaunchConfiguration("use_excavation_site")
-    world_cfg = LaunchConfiguration("world")
-
-    gazebo_excavation = GroupAction(
-        condition=IfCondition(include_gz),
-        actions=[
-            GroupAction(
-                condition=IfCondition(use_excavation_site),
-                actions=[
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(pkg_gazebo, "launch", "gazebo.launch.py"),
-                        ),
-                        launch_arguments={
-                            "world": world_cfg,
-                            "use_sim_time": use_sim,
-                            "headless": LaunchConfiguration("headless"),
-                            "gazebo_unified_gui": LaunchConfiguration(
-                                "gazebo_unified_gui"
-                            ),
-                            "gazebo_verbose": LaunchConfiguration("gazebo_verbose"),
-                            "controller_spawn_delay_sec": LaunchConfiguration(
-                                "gazebo_controller_spawn_delay_sec"
-                            ),
-                            "spawn_x": "0.0",
-                            "spawn_y": "0.0",
-                            "spawn_z": "1.5",
-                            "spawn_dumper": "true",
-                            # dumper pose: from the excavator model profile (scene section)
-                            "excavator_model": model,
-                        }.items(),
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    gazebo_default = GroupAction(
-        condition=IfCondition(include_gz),
-        actions=[
-            GroupAction(
-                condition=UnlessCondition(use_excavation_site),
-                actions=[
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(pkg_gazebo, "launch", "gazebo.launch.py"),
-                        ),
-                        launch_arguments={
-                            "world": world_cfg,
-                            "use_sim_time": use_sim,
-                            "headless": LaunchConfiguration("headless"),
-                            "gazebo_unified_gui": LaunchConfiguration(
-                                "gazebo_unified_gui"
-                            ),
-                            "gazebo_verbose": LaunchConfiguration("gazebo_verbose"),
-                            "controller_spawn_delay_sec": LaunchConfiguration(
-                                "gazebo_controller_spawn_delay_sec"
-                            ),
-                            "excavator_model": model,
-                        }.items(),
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    pub_truck = LaunchConfiguration("publish_truck_obstacle")
-    truck_collision = GroupAction(
-        condition=IfCondition(include_gz),
-        actions=[
-            GroupAction(
-                condition=IfCondition(pub_truck),
-                actions=[
-                    Node(
-                        package="excavator_moveit_config",
-                        executable="publish_truck_collision_object.py",
-                        name="truck_collision_object_publisher",
-                        output="screen",
-                        parameters=[
-                            {
-                                "use_sim_time": ParameterValue(
-                                    use_sim, value_type=bool
-                                ),
-                                "frame_id": "world",
-                                "object_id": "dump_truck_box",
-                                "position_x": float(_scene("truck_box_x", "truck_box_x")),
-                                "position_y": float(_scene("truck_box_y", "truck_box_y")),
-                                "position_z": float(_scene("truck_box_z", "truck_box_z")),
-                                "yaw": float(_scene("truck_box_yaw", "truck_box_yaw")),
-                                "box_length_x": float(_scene("truck_box_lx", "truck_box_lx")),
-                                "box_length_y": float(_scene("truck_box_ly", "truck_box_ly")),
-                                "box_length_z": float(_scene("truck_box_lz", "truck_box_lz")),
-                            }
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    move_group_common = {
-        "use_sim_time": use_sim,
-        "excavator_model": model,
-        "trajectory_action": "/arm_trajectory_controller/follow_joint_trajectory",
-        "joint_states_topic": "/joint_states",
-        "body_rotation_planning_min": LaunchConfiguration("body_rotation_planning_min"),
-        "body_rotation_planning_max": LaunchConfiguration("body_rotation_planning_max"),
-    }
-
-    move_group_mock_ld = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_moveit, "launch", "move_group.launch.py")
-        ),
-        launch_arguments={**move_group_common, "use_mock_hardware": "true"}.items(),
-    )
-
-    move_group_sim_ld = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_moveit, "launch", "move_group.launch.py")
-        ),
-        launch_arguments={**move_group_common, "use_mock_hardware": "false"}.items(),
-    )
-
-    moveit_rviz_mock_ld = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_moveit, "launch", "moveit_rviz.launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": use_sim,
-            "use_mock_hardware": "true",
-            "excavator_model": model,
-            "joint_states_topic": "/joint_states",
-        }.items(),
-    )
-
-    moveit_rviz_sim_ld = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_moveit, "launch", "moveit_rviz.launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": use_sim,
-            "use_mock_hardware": "false",
-            "excavator_model": model,
-            "joint_states_topic": "/joint_states",
-        }.items(),
-    )
-
+    # ---- Wait for the arm trajectory action, then move_group (+ RViz) ----
     wait_script = os.path.join(
         get_package_prefix("excavator_moveit_config"),
         "lib",
         "excavator_moveit_config",
         "wait_for_arm_trajectory_action.py",
     )
-
-    wait_mock = ExecuteProcess(
+    wait_action = ExecuteProcess(
         cmd=[
             "python3",
             wait_script,
             "--timeout",
-            LaunchConfiguration("wait_move_group_timeout_sec"),
+            cfg.get("wait_move_group_timeout_sec", "120.0"),
             "--controller-manager",
-            "/controller_manager",
+            CONTROLLER_MANAGER,
             "--action",
-            "/arm_trajectory_controller/follow_joint_trajectory",
+            TRAJECTORY_ACTION,
         ],
         output="screen",
     )
 
-    wait_gazebo = ExecuteProcess(
-        cmd=[
-            "python3",
-            wait_script,
-            "--timeout",
-            LaunchConfiguration("wait_move_group_timeout_sec"),
-            "--controller-manager",
-            "/controller_manager",
-            "--action",
-            "/arm_trajectory_controller/follow_joint_trajectory",
-        ],
-        output="screen",
+    move_group_ld = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_moveit, "launch", "move_group.launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": use_sim_str,
+            "use_mock_hardware": mock_str,
+            "excavator_model": model,
+            "trajectory_action": TRAJECTORY_ACTION,
+            "joint_states_topic": "/joint_states",
+            "body_rotation_planning_min": cfg["body_rotation_planning_min"],
+            "body_rotation_planning_max": cfg["body_rotation_planning_max"],
+        }.items(),
     )
 
-    def _on_wait_mock_exit(event, context):
+    moveit_rviz_ld = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_moveit, "launch", "moveit_rviz.launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": use_sim_str,
+            "use_mock_hardware": mock_str,
+            "excavator_model": model,
+            "joint_states_topic": "/joint_states",
+        }.items(),
+    )
+
+    launch_rviz = _truthy(cfg.get("launch_rviz", "true"))
+
+    def _on_wait_exit(event, _context):
         if event.returncode != 0:
             return [
                 LogInfo(
@@ -333,116 +151,124 @@ def _setup(context, *args, **kwargs):
                     )
                 ),
             ]
-        actions = [move_group_mock_ld]
-        try:
-            rviz_on = context.perform_substitution(LaunchConfiguration("launch_rviz"))
-        except Exception:
-            rviz_on = "true"
-        if str(rviz_on).lower() in ("true", "1"):
-            actions.append(moveit_rviz_mock_ld)
-        return actions
+        return [move_group_ld] + ([moveit_rviz_ld] if launch_rviz else [])
 
-    def _on_wait_gazebo_exit(event, context):
-        if event.returncode != 0:
-            return [
-                LogInfo(
-                    msg=(
-                        "[bucket_moveit] wait_for_arm_trajectory_action failed (exit %d)."
-                        % event.returncode
-                    )
-                ),
-            ]
-        actions = [move_group_sim_ld]
-        try:
-            rviz_on = context.perform_substitution(LaunchConfiguration("launch_rviz"))
-        except Exception:
-            rviz_on = "true"
-        if str(rviz_on).lower() in ("true", "1"):
-            actions.append(moveit_rviz_sim_ld)
-        return actions
-
-    when_wait_mock_done = RegisterEventHandler(
-        OnProcessExit(target_action=wait_mock, on_exit=_on_wait_mock_exit),
-        condition=UnlessCondition(include_gz),
-    )
-
-    after_jsb_spawn_arm = RegisterEventHandler(
-        OnProcessExit(target_action=spawner_jsb, on_exit=[spawner_arm]),
-        condition=UnlessCondition(include_gz),
-    )
-
-    # Model extras for the mock path (v2: blade_controller, linkage_controller).
-    # In the Gazebo path excavator_gazebo spawns them.
-    extra_spawners_mock = [
-        Node(
-            package="controller_manager",
-            executable="spawner",
-            arguments=[name, "--controller-manager", "/controller_manager"],
-            output="screen",
-            condition=UnlessCondition(include_gz),
-        )
-        for name in profile["extra_controllers"]
-    ]
-    after_arm_spawn_wait_mock = RegisterEventHandler(
-        OnProcessExit(target_action=spawner_arm,
-                      on_exit=[wait_mock] + extra_spawners_mock[:1]),
-        condition=UnlessCondition(include_gz),
-    )
-    extra_chain_mock = [
-        RegisterEventHandler(OnProcessExit(target_action=a, on_exit=[b]),
-                             condition=UnlessCondition(include_gz))
-        for a, b in zip(extra_spawners_mock[:-1], extra_spawners_mock[1:])
+    actions = [
+        LogInfo(msg="[bucket_moveit] mode=%s model=%s use_sim_time=%s"
+                % ("gazebo" if include_gz else "mock", model, use_sim_str)),
+        RegisterEventHandler(OnProcessExit(target_action=wait_action, on_exit=_on_wait_exit)),
     ]
 
-    spawn_controllers_mock = TimerAction(
-        period=3.0,
-        actions=[spawner_jsb, after_jsb_spawn_arm, after_arm_spawn_wait_mock,
-                 *extra_chain_mock],
-        condition=UnlessCondition(include_gz),
-    )
-
-    # v2 linkage node for the mock path (Gazebo path: started by excavator_gazebo)
-    model_nodes_mock = []
-    if profile["linkage"].get("enabled"):
-        model_nodes_mock.append(Node(
-            package="excavator_models",
-            executable="linkage_state_publisher",
-            name="linkage_state_publisher",
-            output="screen",
-            parameters=[{
-                "excavator_model": model,
-                "mode": "controller",
-                "use_sim_time": ParameterValue(use_sim, value_type=bool),
-            }],
-            condition=UnlessCondition(include_gz),
+    if include_gz:
+        # ---- Gazebo: ros2_control, controllers, linkage and world TF live in excavator_gazebo ----
+        pkg_gazebo = get_package_share_directory("excavator_gazebo")
+        gz_args = {
+            "world": cfg["world"],
+            "use_sim_time": use_sim_str,
+            "headless": cfg["headless"],
+            "gazebo_unified_gui": cfg["gazebo_unified_gui"],
+            "gazebo_verbose": cfg["gazebo_verbose"],
+            "controller_spawn_delay_sec": cfg["gazebo_controller_spawn_delay_sec"],
+            "excavator_model": model,
+        }
+        if _truthy(cfg.get("use_excavation_site", "true")):
+            # dumper pose: from the excavator model profile (scene section)
+            gz_args.update({
+                "spawn_x": "0.0",
+                "spawn_y": "0.0",
+                "spawn_z": "1.5",
+                "spawn_dumper": "true",
+            })
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_gazebo, "launch", "gazebo.launch.py"),
+            ),
+            launch_arguments=gz_args.items(),
         ))
 
-    when_wait_gazebo_done = RegisterEventHandler(
-        OnProcessExit(target_action=wait_gazebo, on_exit=_on_wait_gazebo_exit),
-        condition=IfCondition(include_gz),
-    )
+        if _truthy(cfg.get("publish_truck_obstacle", "false")):
+            actions.append(Node(
+                package="excavator_moveit_config",
+                executable="publish_truck_collision_object.py",
+                name="truck_collision_object_publisher",
+                output="screen",
+                parameters=[{
+                    **sim_param,
+                    "frame_id": "world",
+                    "object_id": "dump_truck_box",
+                    "position_x": _scene("truck_box_x", "truck_box_x"),
+                    "position_y": _scene("truck_box_y", "truck_box_y"),
+                    "position_z": _scene("truck_box_z", "truck_box_z"),
+                    "yaw": _scene("truck_box_yaw", "truck_box_yaw"),
+                    "box_length_x": _scene("truck_box_lx", "truck_box_lx"),
+                    "box_length_y": _scene("truck_box_ly", "truck_box_ly"),
+                    "box_length_z": _scene("truck_box_lz", "truck_box_lz"),
+                }],
+            ))
 
-    delayed_wait_gazebo = TimerAction(
-        period=LaunchConfiguration("gazebo_controller_ready_delay_sec"),
-        actions=[wait_gazebo],
-        condition=IfCondition(include_gz),
-    )
+        actions.append(TimerAction(
+            period=float(cfg["gazebo_controller_ready_delay_sec"]),
+            actions=[wait_action],
+        ))
 
-    return [
-        # Mock path (demo-style)
-        when_wait_mock_done,
-        ros2_control_node,
-        robot_state_publisher_mock,
-        world_tf_mock,
-        spawn_controllers_mock,
-        *model_nodes_mock,
-        # Gazebo path (move_group + RViz only after wait_for_arm_trajectory_action succeeds)
-        when_wait_gazebo_done,
-        gazebo_excavation,
-        gazebo_default,
-        delayed_wait_gazebo,
-        truck_collision,
-    ]
+    else:
+        # ---- Mock hardware: local ros2_control + spawner chain ----
+        actions.append(Node(
+            package="controller_manager",
+            executable="ros2_control_node",
+            output="screen",
+            parameters=[robot_desc_mock, profile["controllers_path"], sim_param],
+        ))
+        actions.append(Node(
+            package="robot_state_publisher",
+            executable="robot_state_publisher",
+            output="screen",
+            parameters=[robot_desc_mock, sim_param],
+        ))
+        # SRDF virtual_joint uses parent_frame "world" -> base_link. Without this, "world" is
+        # missing from /tf and the MoveIt RViz planning scene often stays frozen while
+        # Plan/Execute still work. (In Gazebo mode excavator_gazebo publishes it.)
+        actions.append(Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            arguments=[
+                "--frame-id", "world", "--child-frame-id", "base_link",
+                "--x", "0", "--y", "0", "--z", "0",
+                "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1",
+            ],
+            parameters=[sim_param],
+        ))
+
+        # joint_state_broadcaster -> arm_trajectory_controller -> (wait + model extras in chain)
+        # Model extras: v2 blade_controller, linkage_controller.
+        spawner_jsb = _spawner("joint_state_broadcaster")
+        spawner_arm = _spawner("arm_trajectory_controller")
+        extra_spawners = [_spawner(name) for name in profile["extra_controllers"]]
+        chain = [
+            RegisterEventHandler(OnProcessExit(target_action=spawner_jsb, on_exit=[spawner_arm])),
+            RegisterEventHandler(OnProcessExit(
+                target_action=spawner_arm, on_exit=[wait_action] + extra_spawners[:1])),
+        ]
+        chain += [
+            RegisterEventHandler(OnProcessExit(target_action=a, on_exit=[b]))
+            for a, b in zip(extra_spawners[:-1], extra_spawners[1:])
+        ]
+        actions.append(TimerAction(period=3.0, actions=[spawner_jsb, *chain]))
+
+        if profile["linkage"].get("enabled"):
+            actions.append(Node(
+                package="excavator_models",
+                executable="linkage_state_publisher",
+                name="linkage_state_publisher",
+                output="screen",
+                parameters=[{
+                    "excavator_model": model,
+                    "mode": "controller",
+                    **sim_param,
+                }],
+            ))
+
+    return actions
 
 
 def generate_launch_description():
@@ -465,17 +291,18 @@ def generate_launch_description():
             ),
             SetEnvironmentVariable("ROS_DOMAIN_ID", LaunchConfiguration("ros_domain_id")),
             DeclareLaunchArgument(
-                "include_gazebo",
-                default_value="true",
+                "use_gazebo",
+                default_value="false",
                 description=(
-                    "If true: start excavator_gazebo (gz + controllers in sim). "
-                    "If false: local ros2_control mock only (not external Gazebo attach)."
+                    "false (default): local ros2_control mock only. "
+                    "true: start excavator_gazebo (gz + controllers in sim). "
+                    "Never attaches to an external Gazebo."
                 ),
             ),
             DeclareLaunchArgument(
                 "use_sim_time",
-                default_value="true",
-                description="Use Gazebo /clock when include_gazebo is true; set false for mock-only.",
+                default_value="",
+                description="Empty: follows use_gazebo. Set true/false to override.",
             ),
             DeclareLaunchArgument(
                 "launch_rviz",
@@ -488,33 +315,6 @@ def generate_launch_description():
                 description="Seconds to wait for active controllers + FollowJointTrajectory action.",
             ),
             DeclareLaunchArgument(
-                "use_excavation_site",
-                default_value="true",
-                description="When include_gazebo: excavation world + dump truck spawn.",
-            ),
-            DeclareLaunchArgument(
-                "world",
-                default_value=excavation_site_world,
-                description="World SDF when include_gazebo true",
-            ),
-            DeclareLaunchArgument(
-                "publish_truck_obstacle",
-                default_value="true",
-                description="Publish coarse truck box on /collision_object (Gazebo path).",
-            ),
-            DeclareLaunchArgument(
-                "gazebo_controller_ready_delay_sec",
-                default_value="35.0",
-                description=(
-                    "include_gazebo: seconds before wait script runs (after gz spawn + spawners)."
-                ),
-            ),
-            DeclareLaunchArgument(
-                "gazebo_controller_spawn_delay_sec",
-                default_value="12.0",
-                description="Forwarded to excavator_gazebo before loading controllers.",
-            ),
-            DeclareLaunchArgument(
                 "body_rotation_planning_min",
                 default_value="-3.141592653589793",
                 description="Planning-only lower bound for body_rotation (rad)",
@@ -524,35 +324,64 @@ def generate_launch_description():
                 default_value="3.141592653589793",
                 description="Planning-only upper bound for body_rotation (rad)",
             ),
+            # ---- Gazebo-only arguments ----
+            DeclareLaunchArgument(
+                "use_excavation_site",
+                default_value="true",
+                description="Gazebo: excavation world spawn pose + dump truck.",
+            ),
+            DeclareLaunchArgument(
+                "world",
+                default_value=excavation_site_world,
+                description="Gazebo: world SDF.",
+            ),
+            DeclareLaunchArgument(
+                "publish_truck_obstacle",
+                default_value="false",
+                description=(
+                    "Gazebo: publish coarse truck box on /collision_object "
+                    "(shown as a block in RViz; MoveIt plans around it)."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "gazebo_controller_ready_delay_sec",
+                default_value="35.0",
+                description="Gazebo: seconds before wait script runs (after gz spawn + spawners).",
+            ),
+            DeclareLaunchArgument(
+                "gazebo_controller_spawn_delay_sec",
+                default_value="12.0",
+                description="Gazebo: forwarded to excavator_gazebo before loading controllers.",
+            ),
             DeclareLaunchArgument(
                 "headless",
                 default_value="false",
-                description="Forwarded to excavator_gazebo.",
+                description="Gazebo: forwarded to excavator_gazebo.",
             ),
             DeclareLaunchArgument(
                 "gazebo_unified_gui",
                 default_value="false",
-                description="Forwarded to excavator_gazebo.",
+                description="Gazebo: forwarded to excavator_gazebo.",
             ),
             DeclareLaunchArgument(
                 "gazebo_verbose",
                 default_value="1",
-                description="Forwarded to excavator_gazebo.",
+                description="Gazebo: forwarded to excavator_gazebo.",
             ),
             DeclareLaunchArgument("truck_box_x", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_y", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_z", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_yaw", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_lx", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_ly", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             DeclareLaunchArgument("truck_box_lz", default_value="",
-                                  description="empty: from the excavator model profile"),
+                                  description="Gazebo, empty: from the excavator model profile"),
             OpaqueFunction(function=_setup),
         ]
     )

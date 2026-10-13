@@ -1,0 +1,56 @@
+# AUWO sensor configuration: boom_only
+#
+# One 16-beam lidar mounted low, below and just behind the boom pivot.
+#
+# USD scene:  excavator_boom_only.usd
+#
+# Rationale (ALICE / Fraunhofer, Frese et al. 2022): they mounted a dedicated
+# high-resolution lidar BELOW the boom, specifically to maximise resolution in
+# the manipulation area. With the boom above the sensor it no longer shadows
+# the ground in front.
+#
+# Parented to `body`, so it slews with the cab but does NOT pitch with the
+# boom - the pose is a function of body_rotation only.
+#
+# GEOMETRY (verified from the USD stage, not assumed)
+#   pose in body frame   0.900, -0.090, -0.200
+#   body sits 0.600 m above base_link  ->  mount height 0.40 m above ground
+#   tilt 20 deg toward +X (arm side), beams span 5 - 35 deg depression
+#   ground coverage      0.57 - 4.57 m
+#
+# Compare with cab_only (2.43 m high, 30 deg tilt): coverage 2.43 - 9.07 m,
+# which structurally cannot see the inner dig zone. The bucket-tip work
+# envelope is 1.86 - 4.36 m radial, with ground-level digging at 2.56 - 4.27 m
+# — fully inside this mount's coverage.
+#
+# Trade-off: no useful coverage of the dump sector (3 - 8 m) or the outer swing
+# annulus. This mount is a dig-zone specialist, not a surround sensor.
+
+name: boom_only
+description: >
+  Single 16-beam lidar below the boom pivot, 20 deg down-tilt.
+  Tests whether a low forward mount removes the boom shadow and covers the
+  full dig zone, at the cost of surround awareness.
+
+usd_scene: excavator_boom_only.usd
+
+lidars:
+  - frame: lidar_boom
+    parent: body
+    topic: /lidar_boom/points
+    sensor_profile: AUWO_Puck16
+    xyz: [0.900000, -0.090000, -0.200000]
+    quat_xyzw: [0.147809, 0.000000, 0.984808, 0.000000]
+    # documentation only - the quaternion above is authoritative
+    tilt_deg: 20.0
+    height_above_ground_m: 0.40
+    ground_coverage_m: [0.57, 4.57]
+
+mapping:
+  # NOTE: much smaller than cab_only's 2.2 m. At 0.40 m mount height the
+  # ground coverage starts at 0.57 m, so a large crop would delete the inner
+  # dig zone this mount exists to cover. Self-hits on the machine are removed
+  # by the URDF link boxes instead of by range.
+  min_range: 0.5
+  inflate: 0.15
+  voxel_size: 0.10

@@ -1,0 +1,54 @@
+# AUWO sensor configuration: cab_plus_boom
+#
+# Two 16-beam lidars:
+#   lidar_cab  - cab roof centre, surround awareness (same as cab_only)
+#   lidar_boom - low, forward of and below the boom pivot, dig-zone detail
+#
+# USD scene:  excavator_cab_plus_boom.usd
+#
+# Rationale (ALICE / Fraunhofer, Frese et al. 2022): they mounted one high-
+# resolution lidar BELOW the boom, perpendicular, specifically to maximise
+# resolution in the manipulation area. Because the boom is above the sensor,
+# it no longer shadows the ground in front.
+#
+# lidar_boom is parented to `body`, so it slews with the cab but does NOT
+# pitch with the boom - the pose stays a function of body_rotation only.
+#
+# Geometry: boom pivot is at (0.933, -0.134, 0.302) in the body frame.
+# Mount is 0.07 m forward of and 0.15 m below that, ~0.75 m above ground.
+# With 20 deg down-tilt the beams span 5-35 deg -> ground 1.1 m to 8.6 m.
+
+name: cab_plus_boom
+description: >
+  Two 16-beam lidars: cab roof (surround) plus under-boom (dig zone).
+  Tests whether a dedicated low sensor removes the boom shadow and
+  increases point density in the manipulation area.
+
+usd_scene: excavator_cab_plus_boom.usd
+
+lidars:
+  - frame: lidar_cab
+    parent: sensor_lidar_link
+    topic: /lidar_cab/points
+    sensor_profile: AUWO_Puck16
+    xyz: [0.189769, 0.027852, 1.425159]
+    quat_xyzw: [0.385498, 0.0, 0.922709, 0.0]
+    tilt_deg: 30.0
+    height_above_ground_m: 2.43
+    ground_coverage_m: [2.43, 9.07]
+
+  - frame: lidar_boom
+    parent: body
+    topic: /lidar_boom/points
+    sensor_profile: AUWO_Puck16
+    # TODO: replace with values read from the USD stage after placing the prim
+    xyz: [1.00, 0.0, 0.15]
+    quat_xyzw: [0.0, 0.1736, 0.0, 0.9848]   # 20 deg pitch down
+    tilt_deg: 20.0
+    height_above_ground_m: 0.75
+    ground_coverage_m: [1.07, 8.58]
+
+mapping:
+  min_range: 2.2
+  inflate: 0.15
+  voxel_size: 0.10

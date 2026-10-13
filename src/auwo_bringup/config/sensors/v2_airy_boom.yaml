@@ -1,0 +1,58 @@
+# AUWO sensor configuration: v2_airy_boom
+#
+# For the v2 (Liugong) machine. One hemispherical lidar on the boom.
+#
+# READ THIS BEFORE CHANGING ANY NUMBER HERE
+# These poses become TF via static_transform_publisher in auwo.launch.py. They
+# are the ONLY description of where the sensor is on the ROS side - Isaac
+# publishes no transform for it. So this file and the Isaac stage must agree,
+# and nothing checks that they do. The previous config silently carried v1's
+# puck pose onto the v2 machine and put the cloud half a turn away from the
+# truth. Re-read from the stage with sensor_rig.py after moving anything.
+#
+# WHY THE QUATERNION IS IDENTITY
+# The old boom entry had quat_xyzw [0.147809, 0, 0.989016, 0]. That has w = 0,
+# which is a 180 degree rotation - it existed because v1's base_to_base_link
+# carried rpy 0 0 pi, so the arm pointed -X and the boom sensor had to be
+# flipped to face it. v2 has no base flip: the arm points +X and the sensor
+# needs no flip at all.
+#
+# The downcast is NOT a mount tilt either. The Airy profile's beams span
+# -90..0 degrees in elevation, so the hemisphere already points at the ground
+# with the sensor sitting upright. Tilting the mount as well would rotate the
+# dome off nadir and reintroduce a blind ring - the exact thing this sensor is
+# here to remove.
+
+name: v2_airy_boom
+description: >
+  RoboSense Airy (hemispherical, 360 x 90 deg) mounted upright on the boom of
+  the v2 machine. Sees its own nadir, so there is no blind ring over the dig
+  zone - the failing of the 16-beam puck it replaces.
+
+usd_scene: excavator.usd        # env/excavator/excavator.usd
+
+lidars:
+  - frame: lidar_boom
+    parent: body
+    topic: /lidar_boom/points
+    sensor_profile: AUWO_Airy128    # see make_airy_from_os0.py
+    # Body frame. Matches the wrapper prim's translate op in the stage;
+    # body sits 0.504155 m up, so this is ~0.55 m above ground.
+    xyz: [1.790455, -0.180486, 0.971189]
+    # IDENTITY - see the note above. Do not add a tilt.
+    quat_xyzw: [0.000000, 0.000000, 0.000000, 1.000000]
+    tilt_deg: 0.0
+    height_above_ground_m: 1.4753
+    # Hemispherical: coverage starts directly beneath the sensor. The far
+    # figure is the datasheet's 10% reflectivity range, not the 60 m maximum.
+    ground_coverage_m: [0.0, 30.0]
+
+mapping:
+  # The Airy sees from 0 m, so the only reason to clip near returns is the
+  # machine's own structure. 0.3 m drops the boom itself without losing
+  # ground the sensor can legitimately see.
+  min_range: 0.3
+  inflate: 0.15
+  # 0.10 m is affordable here: at 2-4 m the Airy puts 12-45 returns in a
+  # 0.15 m cell, so the dig zone can be mapped finer than the old 0.15 m.
+  voxel_size: 0.10
