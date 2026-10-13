@@ -1,0 +1,25 @@
+digraph G {
+"base_link" -> "base"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"body" -> "sensor_imu_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"base" -> "body"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"body" -> "sensor_lidar_link"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"base" -> "blade_cyl_barrel"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"blade_cyl_barrel" -> "blade_cyl_rod"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"base" -> "blade"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"body" -> "boom_cyl_barrel"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"boom_cyl_barrel" -> "boom_cyl_rod"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"body" -> "boom"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"stick" -> "bucket_cyl_barrel"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"boom" -> "stick"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"bucket_cyl_barrel" -> "bucket_cyl_rod"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"bucket_rocker" -> "bucket_hlink"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"stick" -> "bucket_rocker"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"stick" -> "bucket"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"boom" -> "stick_cyl_barrel"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"stick_cyl_barrel" -> "stick_cyl_rod"[label=" Broadcaster: default_authority\nAverage rate: 30.306\nBuffer length: 3.267\nMost recent transform: 20.766666\nOldest transform: 17.5\n"];
+"body" -> "lidar_boom"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1791551402.36386"[ shape=plaintext ] ;
+}->"base_link";
+}

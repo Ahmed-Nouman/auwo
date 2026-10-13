@@ -25,6 +25,9 @@ ui_limits:
   boom_rotation:   [-0.58, 1.00]
   stick_rotation:  [-0.86, 1.02]
   bucket_rotation: [-1.90, 1.26]
+  
+reach_min: 1.1
+reach_max: 3.85
 
 # Controllers spawned after joint_state_broadcaster and arm_trajectory_controller
 extra_controllers: [blade_controller, linkage_controller]

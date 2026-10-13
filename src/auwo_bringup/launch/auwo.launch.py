@@ -47,6 +47,7 @@ They answer different questions and both are correct. See the build guide.
 """
 
 import os
+import re
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
@@ -75,7 +76,20 @@ def _first_existing(*paths):
 
 def build(context, *args, **kwargs):
     bringup = get_package_share_directory("auwo_bringup")
-    desc = get_package_share_directory("excavator_description")
+
+    # THE MODEL PROFILE IS THE SOURCE OF TRUTH.
+    #
+    # excavator_models holds one profile per machine: the xacro to expand, the
+    # joint limits, the reach, whether the model has a hydraulic linkage, and
+    # whether its mesh URIs need rewriting. Reading it here means this launch
+    # file stops carrying a second, drifting copy of any of that - which is how
+    # v1's arm geometry ended up driving the v2 machine.
+    from excavator_models import (apply_sim_patches, load_profile,
+                                  process_xacro, resolve_package_uris)
+
+    model = LaunchConfiguration("excavator_model").perform(context)
+    prof = load_profile(model)
+    desc = prof["share"]
 
     cfg_name = LaunchConfiguration("sensor_config").perform(context)
     run_name = LaunchConfiguration("run_name").perform(context)
@@ -127,17 +141,46 @@ def build(context, *args, **kwargs):
     nodes = []
 
     # ---------------------------------------------------------------- twin
-    xacro_path = os.path.join(desc, "urdf", "excavator.urdf.xacro")
+    # Expanded here rather than with Command(["xacro ", path]) because the URDF
+    # needs two post-processing steps the raw xacro does not do:
+    #
+    #   apply_sim_patches     per-model fixes the profile asks for
+    #   resolve_package_uris  rewrites package:// mesh paths to file://
+    #
+    # The second one matters: v2's profile sets resolve_mesh_uris because its
+    # OBJ meshes do not load reliably through package://. A browser-based
+    # client such as Foxglove cannot resolve package:// at all.
+    urdf = process_xacro(prof, {"use_sim": "true", "use_mock_hardware": "false"})
+    urdf = resolve_package_uris(apply_sim_patches(urdf, prof), prof, scheme="file")
+
     nodes.append(Node(
         package="robot_state_publisher", executable="robot_state_publisher",
         name="robot_state_publisher", output="screen",
         parameters=[{
-            "robot_description": ParameterValue(
-                Command(["xacro ", xacro_path]), value_type=str),
+            "robot_description": urdf,
             "publish_frequency": 50.0,
             "ignore_timestamp": True,
             **use_sim_time,
         }]))
+
+    # THE HYDRAULIC LINKAGE.
+    #
+    # v2's cylinders and bucket linkage - boom_cyl_barrel/rod, stick_cyl_*,
+    # bucket_cyl_*, bucket_hlink, bucket_rocker, blade_cyl_* - are not
+    # simulated. They are DERIVED from the arm angles by linkage_kinematics.
+    # Without this node they have no joint state at all, so robot_state_
+    # publisher holds them at zero and the cylinders stay put while the arm
+    # moves: the machine renders with its parts visibly detached.
+    #
+    # mirror mode is the one for a live twin: it reads /joint_states, computes
+    # the linkage joints, and republishes them on /joint_states. (display mode
+    # is for the slider demo, controller mode for real actuation.)
+    if prof.get("linkage", {}).get("enabled"):
+        nodes.append(Node(
+            package="excavator_models", executable="linkage_state_publisher",
+            name="linkage_state_publisher", output="screen",
+            parameters=[{"excavator_model": model, "mode": "mirror",
+                         **use_sim_time}]))
 
     for l in cfg["lidars"]:
         x, y, z = [str(v) for v in l["xyz"]]
@@ -220,7 +263,14 @@ def build(context, *args, **kwargs):
     if do_dig:
         nodes.append(Node(
             package="auwo_task", executable="dig_planner.py",
-            name="dig_planner", output="screen"))
+            name="dig_planner", output="screen",
+            # The planner defaulted to v1's 1.86 - 4.36 m envelope and happily
+            # picked targets a 3.9 m machine cannot reach. Derive it instead.
+            # Fallbacks are v2's swept envelope; add reach_min/reach_max to
+            # model_profile.yaml so the profile stays the single source.
+            parameters=[{"reach_min": float(prof.get("reach_min", 1.1)),
+                         "reach_max": float(prof.get("reach_max", 3.85)),
+                         **use_sim_time}]))
         nodes.append(Node(
             package="auwo_task", executable="excavation_executor.py",
             name="excavation_executor", output="screen"))
@@ -240,6 +290,31 @@ def build(context, *args, **kwargs):
                 "send_buffer_limit": 100000000,
                 "use_compression": True,
                 "max_qos_depth": 10,
+
+                # MESH ASSETS.
+                #
+                # The browser cannot read the robot's meshes itself; it asks
+                # the bridge for them, and the bridge refuses any URI not on
+                # this allowlist. The default permits package:// only, so the
+                # moment the URDF carries file:// paths - which v2's profile
+                # asks for, because its OBJ meshes do not load reliably
+                # through package:// in RViz - every mesh is rejected with
+                # "Asset URI not allowed" and the machine renders as bare
+                # frames.
+                #
+                # The first entry is the stock package:// rule, kept. The
+                # second allows file:// ONLY under this model's own share
+                # directory: the bridge serves whatever matches, so it should
+                # not be opened to the filesystem at large.
+                #
+                # .mtl and the image types matter as much as the meshes - an
+                # OBJ pulls in its .mtl, which pulls in its texture.
+                "asset_uri_allowlist": [
+                    r"^package://(\w+/).*"
+                    r"\.(dae|fbx|glb|gltf|jpeg|jpg|mtl|obj|png|stl|tif|tiff|urdf|webp)$",
+                    r"^file://" + re.escape(prof["share"]) + r"/.*"
+                    r"\.(dae|fbx|glb|gltf|jpeg|jpg|mtl|obj|png|stl|tif|tiff|urdf|webp)$",
+                ],
                 **use_sim_time,
             }]))
 
@@ -262,7 +337,11 @@ def build(context, *args, **kwargs):
 def generate_launch_description():
     a = DeclareLaunchArgument
     return LaunchDescription([
-        a("sensor_config", default_value="roof_plus_boom",
+        a("excavator_model", default_value="v2",
+          description="which machine: v1 (dummy) | v2 (Liugong). Selects the "
+                      "model profile, and with it the URDF that "
+                      "robot_state_publisher turns into TF."),
+        a("sensor_config", default_value="v2_airy_boom",
           description="name of config/sensors/<name>.yaml"),
         a("run_name", default_value="run",
           description="survey map filename stem, written under %s" % MAP_DIR),
