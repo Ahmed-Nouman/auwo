@@ -83,6 +83,7 @@ ros2 launch excavator_moveit_config bucket_moveit.launch.py include_gazebo:=fals
 ```
 
 - **Planning group**: `excavator_arm` (chain to `bucket` link). In **MotionPlanning**, **Plan** then **Execute**.
+- **Planner presets**: the SRDF of each model (v1 `config/excavator.srdf`, v2 `config/v2/excavator.srdf`) defines named arm poses **`home`**, **`scoop`**, **`drag`**, **`lift`**, **`transport`**, **`dump`**. Pick one under **MotionPlanning → Planning → Goal State**, then **Plan** / **Execute** (works in mock and Gazebo mode). Running them in order gives one dig-and-dump cycle; `transport`/`dump` face the dump truck of the model profile.
 - **Trajectory path to Gazebo**: MoveIt sends `FollowJointTrajectory` goals to `/arm_trajectory_controller/follow_joint_trajectory`.
 - **Preset panel Simulation mode note**: this toggle affects the twin router (`/arm_position_controller/commands`) and is **independent** of MoveIt execution.
 - **`launch_rviz` default is `true`** for the all-in-one flow; use `launch_rviz:=false` with `auwo_twin` so only one RViz runs. With `include_gazebo:=false`, `move_group` starts immediately (no wait).
