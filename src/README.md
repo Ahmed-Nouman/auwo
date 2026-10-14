@@ -40,8 +40,8 @@ Both displays are enabled by default. To add them manually: **Add** → **By dis
 | Package | Role |
 |--------|-----|
 | `excavator_description` | Excavator URDF/xacro, meshes, world SDF, controller config, RViz config |
-| `truck_description` | Dump truck URDF/xacro and meshes (GLB for Gazebo, STL for RViz) |
 | `excavator_gazebo` | Gazebo launch, robot spawn, clock/sensor bridge, publish_robot_descriptions |
+| `dumper_description` | Static tracked dumper: OBJ mesh (from `Dumper_packed.blend`) + Gazebo model, spawned by `excavator_gazebo` (`spawn_dumper`, `dumper_x/y/z/yaw`) |
 | `excavator_interactive_rviz` | RViz launch, interactive markers, twin router |
 | `excavator_teleop` | Teleop script |
 | `excavator_cycle` | Automatic dig/dump cycle (publishes target positions) |

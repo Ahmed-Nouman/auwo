@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Gazebo Harmonic launcher for the AUWO excavator (ROS 2 Jazzy).
-# The excavator is the only model spawned (no dump truck, no pete_environment).
+# Spawns the excavator and, with spawn_dumper:=true (default), the static tracked
+# dumper from dumper_description at the model profile's scene.dumper_* pose.
 # excavator_model:=v1 (excavator_description) or v2 (excavator_v2_description).
 import os
 import shutil
@@ -157,6 +158,33 @@ def _excavator_urdf_files(profile, model_override: str = '') -> tuple[str, str]:
     return rviz_path, gz_path
 
 
+def _dumper_spawner(cfg, profile):
+    """Spawn the static dumper. Empty dumper_* args fall back to the profile's scene pose.
+
+    The model's origin is on the ground under the track centre, +X towards the dump bed.
+    """
+    scene = profile.get('scene', {})
+
+    def _arg(name):
+        value = cfg.get(name, '').strip()
+        return value if value else str(scene.get(name, 0.0))
+
+    sdf_path = os.path.join(
+        get_package_share_directory('dumper_description'), 'models', 'dumper', 'model.sdf')
+    pose = ['-x', _arg('dumper_x'), '-y', _arg('dumper_y'), '-z', _arg('dumper_z'),
+            '-Y', _arg('dumper_yaw')]
+    print(f'[excavator_gazebo] spawning dumper at {" ".join(pose)}')
+    return Node(
+        package='ros_gz_sim',
+        executable='create',
+        name='create_dumper',
+        output='screen',
+        arguments=['-world', 'default', '-file', sdf_path, '-name', 'dumper',
+                   '-allow_renaming', 'true', *pose],
+        additional_env=_GZ_TRANSPORT_ENV,
+    )
+
+
 def _launch_setup(context, *args, **kwargs):
     """Everything that depends on the selected excavator model."""
     pkg_name = 'excavator_description'   # shared worlds / models / Gazebo model shim
@@ -199,6 +227,9 @@ def _launch_setup(context, *args, **kwargs):
         TextSubstitution(text=':' + os.path.join(pkg_share, 'worlds')),
         TextSubstitution(text=':' + user_models),
     ]
+    # model://dumper (dumper_description)
+    resource_parts.append(TextSubstitution(
+        text=':' + os.path.join(get_package_share_directory('dumper_description'), 'models')))
     if profile['share'] != pkg_share:
         resource_parts += [
             TextSubstitution(text=':' + os.path.dirname(profile['share'])),
@@ -321,6 +352,8 @@ def _launch_setup(context, *args, **kwargs):
     )
 
     model_actions = []
+    if cfg.get('spawn_dumper', 'false').strip().lower() in ('true', '1'):
+        model_actions.append(_dumper_spawner(cfg, profile))
     if profile['linkage'].get('enabled'):
         # v2: hydraulic cylinders + bucket linkage follow the arm joints
         model_actions.append(Node(
@@ -411,14 +444,17 @@ def generate_launch_description():
     spawn_P_arg = DeclareLaunchArgument('spawn_P', default_value='0.0')
     spawn_Y_arg = DeclareLaunchArgument('spawn_Y', default_value='0.0')
 
-    # The dump truck is no longer spawned. These arguments are kept so existing
-    # launch files and scripts that still pass them keep working; they do nothing.
     spawn_dumper_arg = DeclareLaunchArgument(
-        'spawn_dumper', default_value='false', description='Deprecated: no truck is spawned.')
-    dumper_x_arg = DeclareLaunchArgument('dumper_x', default_value='', description='Deprecated.')
-    dumper_y_arg = DeclareLaunchArgument('dumper_y', default_value='', description='Deprecated.')
-    dumper_z_arg = DeclareLaunchArgument('dumper_z', default_value='', description='Deprecated.')
-    dumper_yaw_arg = DeclareLaunchArgument('dumper_yaw', default_value='', description='Deprecated.')
+        'spawn_dumper', default_value='true',
+        description='Spawn the static tracked dumper (dumper_description).')
+    dumper_x_arg = DeclareLaunchArgument(
+        'dumper_x', default_value='', description='Dumper x [m]; empty = profile scene.dumper_x.')
+    dumper_y_arg = DeclareLaunchArgument(
+        'dumper_y', default_value='', description='Dumper y [m]; empty = profile scene.dumper_y.')
+    dumper_z_arg = DeclareLaunchArgument(
+        'dumper_z', default_value='', description='Dumper z [m]; empty = profile scene.dumper_z.')
+    dumper_yaw_arg = DeclareLaunchArgument(
+        'dumper_yaw', default_value='', description='Dumper yaw [rad]; empty = profile scene.dumper_yaw.')
 
     controller_spawn_delay_sec_arg = DeclareLaunchArgument(
         'controller_spawn_delay_sec',

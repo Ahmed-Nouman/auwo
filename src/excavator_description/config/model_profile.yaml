@@ -52,7 +52,7 @@ excavation_cycle:         # excavator_cycle node
 scene:
   dumper_x: 4.0
   dumper_y: 3.0
-  dumper_z: 0.5
+  dumper_z: 0.0           # dumper_description origin is on the ground (static model)
   dumper_yaw: 0.0
   truck_box_x: 6.25
   truck_box_y: 3.0

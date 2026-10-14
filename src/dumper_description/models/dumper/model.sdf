@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- Tracked mini dumper, ~3.15 x 0.92 x 1.45 m. Frame: +X towards the dump bed,
+     origin on the ground under the centre of the tracks. Static: it is a dump target. -->
+<sdf version="1.9">
+  <model name="dumper">
+    <static>true</static>
+    <link name="dumper_link">
+      <visual name="visual">
+        <geometry>
+          <mesh><uri>model://dumper/meshes/dumper.obj</uri></mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh><uri>model://dumper/meshes/dumper.obj</uri></mesh>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>
