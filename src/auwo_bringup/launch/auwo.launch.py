@@ -182,16 +182,48 @@ def build(context, *args, **kwargs):
             parameters=[{"excavator_model": model, "mode": "mirror",
                          **use_sim_time}]))
 
-    for l in cfg["lidars"]:
-        x, y, z = [str(v) for v in l["xyz"]]
-        qx, qy, qz, qw = [str(v) for v in l["quat_xyzw"]]
-        nodes.append(Node(
-            package="tf2_ros", executable="static_transform_publisher",
-            name=l["frame"] + "_tf", output="screen",
-            arguments=["--x", x, "--y", y, "--z", z,
-                       "--qx", qx, "--qy", qy, "--qz", qz, "--qw", qw,
-                       "--frame-id", l["parent"], "--child-frame-id", l["frame"]],
-            parameters=[use_sim_time]))
+    # SENSOR TF: exactly one publisher per edge, chosen here.
+    #
+    # sensor_tf:=yaml   (default) a static_transform_publisher per lidar, from
+    #                   config/sensors/<name>.yaml. This is the mode that will
+    #                   run on the real machine, where the mount offsets are
+    #                   measured with a tape and nothing else knows them.
+    #
+    # sensor_tf:=isaac  no static publishers; Isaac's ROS2 Publish Transform
+    #                   Tree node publishes parent -> sensor straight from the
+    #                   stage. For a sensor-placement study: drag the sensor in
+    #                   the viewport and ROS follows, with no YAML to sync and
+    #                   no chance of the two disagreeing.
+    #
+    # Running both would put TWO publishers on the same TF edge, which does not
+    # error - the frames just flicker between two poses as the messages
+    # interleave, and a point cloud in RViz jitters for no visible reason. So
+    # it is one or the other, by construction.
+    tf_source = LaunchConfiguration("sensor_tf").perform(context)
+    if tf_source not in ("yaml", "isaac"):
+        raise RuntimeError("sensor_tf must be 'yaml' or 'isaac', got %r"
+                           % tf_source)
+
+    if tf_source == "yaml":
+        for l in cfg["lidars"]:
+            x, y, z = [str(v) for v in l["xyz"]]
+            qx, qy, qz, qw = [str(v) for v in l["quat_xyzw"]]
+            nodes.append(Node(
+                package="tf2_ros", executable="static_transform_publisher",
+                name=l["frame"] + "_tf", output="screen",
+                arguments=["--x", x, "--y", y, "--z", z,
+                           "--qx", qx, "--qy", qy, "--qz", qz, "--qw", qw,
+                           "--frame-id", l["parent"],
+                           "--child-frame-id", l["frame"]],
+                parameters=[use_sim_time]))
+    else:
+        print("[auwo] sensor_tf=isaac: no static publishers for %s."
+              % ", ".join(l["frame"] for l in cfg["lidars"]))
+        print("[auwo] Isaac must publish these, or the clouds have no "
+              "transform at all.")
+        print("[auwo] Add the graph nodes with add_sensor_tf_graph.py, and "
+              "check with:  ros2 run tf2_ros tf2_echo base_link %s"
+              % cfg["lidars"][0]["frame"])
 
     nodes.append(Node(
         package="auwo_control", executable="isaac_command_bridge.py",
@@ -343,6 +375,13 @@ def generate_launch_description():
                       "robot_state_publisher turns into TF."),
         a("sensor_config", default_value="v2_airy_boom",
           description="name of config/sensors/<name>.yaml"),
+        a("sensor_tf", default_value="yaml",
+          description="who publishes parent->sensor TF. 'yaml' = a static "
+                      "publisher per lidar from the sensor config, which is "
+                      "what the real machine will use. 'isaac' = Isaac's "
+                      "Publish Transform Tree node reads it off the stage, "
+                      "for sensor-placement work. Never both: two publishers "
+                      "on one edge make the frame flicker between poses."),
         a("run_name", default_value="run",
           description="survey map filename stem, written under %s" % MAP_DIR),
         a("mode", default_value="teleop",

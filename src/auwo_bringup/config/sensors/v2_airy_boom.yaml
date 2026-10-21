@@ -47,6 +47,15 @@ lidars:
     # figure is the datasheet's 10% reflectivity range, not the 60 m maximum.
     ground_coverage_m: [0.0, 30.0]
 
+
+  - frame: lidar_avia
+    parent: body                      # patched; becomes `boom` if reparented
+    topic: /avia/points
+    xyz: [1.302442, 0.644062, 1.494952]
+    quat_xyzw: [0.000000, 0.307357, 0.000000, 0.951594]
+    height_above_ground_m: 1.9991
+
+
 mapping:
   # The Airy sees from 0 m, so the only reason to clip near returns is the
   # machine's own structure. 0.3 m drops the boom itself without losing

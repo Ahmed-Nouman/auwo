@@ -84,6 +84,10 @@ AP.add_argument("--mode", choices=["non-repetitive", "repetitive"],
                 default="non-repetitive")
 AP.add_argument("--rate", type=float, default=10.0, help="frame rate, Hz")
 AP.add_argument("--returns", choices=["first", "dual", "triple"], default="first")
+AP.add_argument("--shape", choices=["ellipse", "rect"], default=None,
+                help="FOV outline. Default: ellipse for non-repetitive (the "
+                     "rosette is inscribed in one), rect for repetitive (a "
+                     "line scan really is rectangular).")
 AP.add_argument("--states", type=int, default=1,
                 help="emitter states to cycle (see NON-REPETITIVE SCAN below). "
                      "1 = single fixed grid, the safe default.")
@@ -256,9 +260,24 @@ if "emitterStates" not in prof:
 # 10 Hz.
 n_frame = int(PTS / args.rate)         # points in any single frame
 N = max(1, args.states)
-n_grid = n_frame * N                   # the accumulated grid over N frames
 
 h_deg, v_deg = FOV
+
+# FOV SHAPE. The datasheet gives 70.4 x 77.2 deg, and it is tempting to read
+# that as a rectangle. It is not: the non-repetitive pattern is a rosette
+# traced by Risley prisms, inscribed in an ELLIPSE with those axes. A
+# rectangular grid illuminates the corners, and the corners are where the two
+# shapes differ most - at (35.2, 38.6) a corner ray is about 52 deg off
+# boresight against the ellipse's 38.6 deg maximum. A third too wide, and
+# visible as a ground footprint noticeably broader than the spec.
+#
+# The repetitive mode IS a rectangle: a line scan sweeping 70.4 x 4.5 deg.
+SHAPE = args.shape or ("ellipse" if args.mode == "non-repetitive" else "rect")
+FILL = math.pi / 4.0 if SHAPE == "ellipse" else 1.0   # ellipse/rect area ratio
+
+# Oversample so that what SURVIVES the mask is the point count we want, rather
+# than the count before masking.
+n_grid = int(math.ceil(n_frame * N / FILL))
 ny = max(1, int(round(math.sqrt(n_grid * v_deg / h_deg))))
 nx = max(1, int(round(n_grid / ny)))
 
@@ -278,19 +297,36 @@ while math.gcd(nx, N) != 1 and N > 1:
 # EVERY state must be EXACTLY numberOfEmitters long. Not near-equal - equal.
 # So the grid is truncated to a whole multiple of N and the remainder dropped;
 # that is at most N-1 points out of a quarter million.
-n_grid_full = nx * ny
+pts = []
+for j in range(ny):
+    e = round(-v_deg / 2 + (v_deg * j / (ny - 1) if ny > 1 else v_deg / 2), 5)
+    for i in range(nx):
+        a = round(-h_deg / 2 + (h_deg * i / (nx - 1) if nx > 1 else 0.0), 5)
+        if SHAPE == "ellipse":
+            # normalised radius; > 1 is outside the FOV ellipse
+            if (a / (h_deg / 2.0)) ** 2 + (e / (v_deg / 2.0)) ** 2 > 1.0:
+                continue
+        pts.append((a, e))
+
+n_grid_full = len(pts)
 n_per_state = n_grid_full // N
 n_use = n_per_state * N
 dropped = n_grid_full - n_use
 
 states = [{"azimuthDeg": [], "elevationDeg": []} for _ in range(N)]
 for k in range(n_use):
-    j, i = divmod(k, nx)
-    e = round(-v_deg / 2 + (v_deg * j / (ny - 1) if ny > 1 else v_deg / 2), 5)
-    a = round(-h_deg / 2 + (h_deg * i / (nx - 1) if nx > 1 else 0.0), 5)
+    a, e = pts[k]
     s = states[k % N]
     s["azimuthDeg"].append(a)
     s["elevationDeg"].append(e)
+
+# The widest ray actually emitted, as an angle off boresight. This is the
+# number to compare against what a point cloud looks like - a rectangle and an
+# ellipse with the same quoted FOV differ here by about 14 degrees.
+max_off_axis = max(
+    math.degrees(math.acos(max(-1.0, min(1.0,
+        math.cos(math.radians(a)) * math.cos(math.radians(e))))))
+    for a, e in pts)
 
 # fireTimeNs is deliberately all zero: a non-zero maxFireTime must fit inside
 # one pattern interval, and a mismatch there is what produced
@@ -488,7 +524,11 @@ with open(dst, "w") as f:
 # --- report ---------------------------------------------------------------
 print("wrote %s\n" % dst)
 print("  mode            %s" % args.mode)
-print("  FOV             %.1f x %.1f deg" % (h_deg, v_deg))
+print("  FOV             %.1f x %.1f deg  (%s)" % (h_deg, v_deg, SHAPE))
+print("  widest ray      %.1f deg off boresight%s"
+      % (max_off_axis,
+         "" if SHAPE == "ellipse" else
+         "  <-- a rect reaches past the spec in its corners"))
 print("  states          %d  (%s)"
       % (N, "one fixed pattern, every frame identical" if N == 1
          else "cycled one per frame, %.2f s to fill" % (N / args.rate)))
