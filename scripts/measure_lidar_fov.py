@@ -159,16 +159,26 @@ def main():
     histogram(el, min(el), max(el))
 
     if args.expect_h or args.expect_v:
-        print("\nAGAINST SPEC")
+        # FULL range, not the percentile span. The percentiles are there to
+        # show whether the edges are sparse; comparing them to spec throws
+        # away the outermost 2% of the cloud, which on a FOV measurement is
+        # the only part that defines the answer. Doing that reported a sensor
+        # measuring 70.1 of a specified 70.4 deg as "MISMATCH 64.1".
+        print("\nAGAINST SPEC   (full range; percentiles are for the tails)")
         if args.expect_h:
-            got = pct(az, 99) - pct(az, 1)
+            got = max(az) - min(az)
             print("   horizontal  %.1f measured vs %.1f expected   %s"
                   % (got, args.expect_h,
-                     "ok" if abs(got - args.expect_h) < 3 else "<-- MISMATCH"))
+                     "ok" if abs(got - args.expect_h) < 1.5 else "<-- MISMATCH"))
+            print("               (1-99 pct span %.1f - a much smaller number"
+                  % (pct(az, 99) - pct(az, 1)))
+            print("                here just means the edges are thinly "
+                  "sampled)")
         if args.expect_v:
-            got = pct(el, 99) - pct(el, 1)
-            print("   vertical    %.1f measured vs %.1f expected"
-                  % (got, args.expect_v))
+            got = max(el) - min(el)
+            print("   vertical    %.1f measured vs %.1f expected   %s"
+                  % (got, args.expect_v,
+                     "ok" if abs(got - args.expect_v) < 1.5 else "(short)"))
             print("      A SHORTFALL HERE IS EXPECTED on a tilted sensor over")
             print("      open ground: rays above the horizon return nothing,")
             print("      so the top of the FOV is invisible. With a %.1f deg"

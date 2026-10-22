@@ -51,9 +51,32 @@ lidars:
   - frame: lidar_avia
     parent: body                      # patched; becomes `boom` if reparented
     topic: /avia/points
-    xyz: [1.302442, 0.644062, 1.494952]
-    quat_xyzw: [0.000000, 0.307357, 0.000000, 0.951594]
-    height_above_ground_m: 1.9991
+    xyz: [1.310466, 0.639696, 1.486540]
+    quat_xyzw: [0.043799, 0.456810, -0.046871, 0.887248]
+    height_above_ground_m: 1.9907
+
+
+  - frame: lidar_avia_left
+    parent: body
+    topic: /avia_left/points                      
+    xyz: [0.422122, 0.578114, 1.486540]
+    quat_xyzw: [-0.334050, 0.314649, 0.672233, 0.580956]
+    height_above_ground_m: 1.9907
+
+  - frame: lidar_avia_right
+    parent: body                      
+    topic: /avia_right/points
+    xyz: [0.361264, -0.350187, 1.486540]
+    quat_xyzw: [0.335709, 0.312879, -0.623447, 0.633025]
+    height_above_ground_m: 1.9907
+
+
+  - frame: lidar_avia_rear
+    parent: body                      
+    topic: /avia_rear/points
+    xyz: [0.074612, 0.008777, 1.486540]
+    quat_xyzw: [0.458904, -0.000297, -0.887696, 0.037449]
+    height_above_ground_m: 1.9907
 
 
 mapping:

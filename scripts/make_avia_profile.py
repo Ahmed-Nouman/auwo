@@ -100,7 +100,19 @@ args = AP.parse_args()
 # --- datasheet ------------------------------------------------------------
 FOV = {"non-repetitive": (70.4, 77.2), "repetitive": (70.4, 4.5)}[args.mode]
 PTS = {"first": 240000, "dual": 480000, "triple": 720000}[args.returns]
-NEAR_M, FAR_M = 0.1, 190.0        # 190 m is the 10% reflectivity figure
+# 1 m is the Avia's near-field blind zone, not a conservative guess: "targets
+# closer than 1 m cannot be measured". An earlier version of this file had
+# 0.1 m copied from the Airy, which would let the sim return points the real
+# sensor cannot produce - and on a machine whose own structure sits well
+# inside 1 m of any mount, those phantom returns are exactly the ones that
+# would make a bad mounting position look acceptable.
+NEAR_M, FAR_M = 1.0, 190.0        # 190 m is the 10% reflectivity figure
+
+# And between 1 and 3 m the manual warns the cloud "may show distortion".
+# That band is NOT modelled here - Isaac returns clean points throughout - so
+# anything the sim reports between 1 and 3 m is better than the hardware will
+# do. With a dig zone starting at 2 m, that overlap is worth keeping in mind.
+DISTORTION_NEAR, DISTORTION_FAR = 1.0, 3.0
 REFL_RANGE = 190.0
 WAVELENGTH_NM = 905.0
 RANGE_ACC_M = 0.02                # 1 sigma < 2 cm @ 20 m
@@ -275,21 +287,11 @@ h_deg, v_deg = FOV
 SHAPE = args.shape or ("ellipse" if args.mode == "non-repetitive" else "rect")
 FILL = math.pi / 4.0 if SHAPE == "ellipse" else 1.0   # ellipse/rect area ratio
 
-# Oversample so that what SURVIVES the mask is the point count we want, rather
-# than the count before masking.
-n_grid = int(math.ceil(n_frame * N / FILL))
-ny = max(1, int(round(math.sqrt(n_grid * v_deg / h_deg))))
-nx = max(1, int(round(n_grid / ny)))
-
-# Interleaving is by flat index: state = k mod N, where k = j*nx + i. Row j is
-# therefore offset by (j*nx) mod N, and if gcd(nx, N) == 1 that offset takes
-# every value as j advances, so each state lands on a diagonal lattice spread
-# across BOTH axes. If nx shares a factor with N the rows line up and each
-# state degenerates into a vertical comb - sparse in azimuth, full density in
-# elevation, which is not how a real scan's gaps close. One extra column fixes
-# it and costs nothing.
-while math.gcd(nx, N) != 1 and N > 1:
-    nx += 1
+# Grid sizing, the ellipse mask and the point-count fit all happen in
+# build_grid() below. Interleaving is by flat index: state = k mod N, where
+# k counts through the masked list. build_grid keeps gcd(gx, N) == 1 so each
+# row is offset differently and every state lands on a diagonal lattice across
+# both axes, rather than degenerating into a vertical comb.
 
 # HARD CONSTRAINT, learned from the loader rejecting the first attempt:
 #   "Attribute ...s003:azimuthDeg is of length 24008, expecting length 24009
@@ -297,16 +299,46 @@ while math.gcd(nx, N) != 1 and N > 1:
 # EVERY state must be EXACTLY numberOfEmitters long. Not near-equal - equal.
 # So the grid is truncated to a whole multiple of N and the remainder dropped;
 # that is at most N-1 points out of a quarter million.
-pts = []
-for j in range(ny):
-    e = round(-v_deg / 2 + (v_deg * j / (ny - 1) if ny > 1 else v_deg / 2), 5)
-    for i in range(nx):
-        a = round(-h_deg / 2 + (h_deg * i / (nx - 1) if nx > 1 else 0.0), 5)
-        if SHAPE == "ellipse":
-            # normalised radius; > 1 is outside the FOV ellipse
-            if (a / (h_deg / 2.0)) ** 2 + (e / (v_deg / 2.0)) ** 2 > 1.0:
-                continue
-        pts.append((a, e))
+def build_grid(n_target_grid):
+    """A masked angular grid of roughly n_target_grid points."""
+    gy = max(1, int(round(math.sqrt(n_target_grid * v_deg / h_deg))))
+    gx = max(1, int(round(n_target_grid / gy)))
+    while math.gcd(gx, N) != 1 and N > 1:
+        gx += 1
+    out = []
+    for j in range(gy):
+        e = round(-v_deg / 2 + (v_deg * j / (gy - 1) if gy > 1 else v_deg / 2),
+                  5)
+        for i in range(gx):
+            a = round(-h_deg / 2 + (h_deg * i / (gx - 1) if gx > 1 else 0.0), 5)
+            if SHAPE == "ellipse":
+                # normalised radius; > 1 is outside the FOV ellipse
+                if (a / (h_deg / 2.0)) ** 2 + (e / (v_deg / 2.0)) ** 2 > 1.0:
+                    continue
+            out.append((a, e))
+    return out, gx, gy
+
+
+# Land on the datasheet point rate exactly rather than near it. How many grid
+# points survive an elliptical mask is not simply area x density - it depends
+# on where the lattice falls relative to the boundary - so the oversample
+# factor is fitted rather than computed. Guessing it once left the sim at
+# 237,210 pts/s against a 240,000 pts/s spec: only 1.2% off, but it is a
+# headline number and there is no reason to be wrong about it.
+target = n_frame * N
+factor = 1.0 / FILL
+pts, nx, ny = [], 1, 1
+for _ in range(8):
+    pts, nx, ny = build_grid(int(math.ceil(target * factor)))
+    if len(pts) >= target:
+        break
+    factor *= float(target) / max(1, len(pts)) * 1.01
+
+# Trim to exactly the target by dropping evenly spaced points. Truncating the
+# list instead would cut whole rows off one edge and quietly reshape the FOV.
+if len(pts) > target:
+    step = len(pts) / float(target)
+    pts = [pts[int(i * step)] for i in range(target)]
 
 n_grid_full = len(pts)
 n_per_state = n_grid_full // N

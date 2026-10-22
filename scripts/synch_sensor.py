@@ -246,6 +246,7 @@ for prim in lidars:
         continue
     xyz, quat = pose_relative_to(prim, link)
 
+
     # Height above the MACHINE's ground plane, not world Z. base_link sits on
     # the ground by definition in the URDF; the excavator prim may be placed
     # anywhere in the world, so world Z says nothing useful. (An earlier
@@ -262,6 +263,26 @@ for prim in lidars:
              quat[0], quat[1], quat[2], quat[3],
              "%.3f m" % height if height is not None else "?"))
     found.append((frame, link.GetName(), xyz, quat, height, prim))
+
+# TWO WRAPPERS WITH THE SAME NAME
+# Duplicating a sensor in the viewport usually produces a unique prim name, but
+# moving copies between parents, or renaming by hand, can leave two wrappers
+# called the same thing. Both would then resolve to one frame, both would patch
+# the SAME yaml block, and the last one scanned would win - silently, with the
+# other sensor's cloud stamped with a transform that belongs to its twin.
+_seen = {}
+for frame, _, _, _, _, prim in found:
+    _seen.setdefault(frame, []).append(str(prim.GetPath()))
+_dupes = {f: ps for f, ps in _seen.items() if len(ps) > 1}
+if _dupes:
+    print("\nDUPLICATE FRAME NAMES - two sensors cannot share one TF frame:")
+    for f, ps in _dupes.items():
+        print("   %s" % f)
+        for p in ps:
+            print("      %s" % p)
+    print("   Rename the wrappers so each is unique, and give each its own")
+    print("   frameId and yaml block. Until then only one of them is placed")
+    print("   correctly and nothing reports which.")
 
 # WHICH LIDAR IS ACTUALLY PUBLISHING?
 # The graph's Isaac Create Render Product node holds a cameraPrim relationship,
@@ -323,6 +344,39 @@ else:
     # wall of lines to eyeball. "Differs" is not useful on its own: 2 mm is
     # rounding, 1.8 m and 180 deg is v1's pose still sitting on a v2 machine.
     # The magnitude is what tells you which you are looking at.
+    # RECONCILE THE TWO LISTS BEFORE ANYTHING ELSE.
+    #
+    # Blocks are matched by the name derived from the PRIM, so a sensor whose
+    # wrapper is `lidar_avia_01` in the stage never finds a `lidar_avia_left`
+    # block however correct that block is. Reporting only "no block for
+    # lidar_avia_01" leaves you guessing; printing BOTH unmatched lists side
+    # by side makes a rename obvious, because the two names are sitting next
+    # to each other.
+    yaml_frames = re.findall(r'^\s*-\s+frame:\s*(\S+)\s*$', text, re.M)
+    stage_frames = [f for f, _, _, _, _, _ in found]
+    only_stage = [f for f in stage_frames if f not in yaml_frames]
+    only_yaml = [f for f in yaml_frames if f not in stage_frames]
+
+    print("RECONCILE  stage vs YAML")
+    print("   in both          %s"
+          % (", ".join(f for f in stage_frames if f in yaml_frames) or "none"))
+    if only_stage:
+        print("   stage only       %s" % ", ".join(only_stage))
+        print("                    these sensors exist but have no yaml block,")
+        print("                    so nothing will publish their transform")
+    if only_yaml:
+        print("   yaml only        %s" % ", ".join(only_yaml))
+        print("                    these blocks name no sensor in the stage.")
+        print("                    A static transform is still published for")
+        print("                    them, pointing at nothing.")
+    if only_stage and only_yaml:
+        print()
+        print("   BOTH LISTS NON-EMPTY - that is usually ONE rename, not two")
+        print("   missing things. The stage name is what this script matches")
+        print("   on; the yaml name must equal the frameId on the RTX Lidar")
+        print("   Helper. Make all three agree: prim name = frameId = block.")
+    print()
+
     print("DRIFT  stage vs YAML")
     print("%-16s %-12s %-12s %s"
           % ("frame", "translation", "rotation", ""))
